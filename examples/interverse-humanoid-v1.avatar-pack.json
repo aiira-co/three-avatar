@@ -1,0 +1,166 @@
+{
+  "id": "interverse:pack/humanoid-core",
+  "version": "1.0.0",
+  "dependencies": [
+    {
+      "id": "interverse:pack/rigs",
+      "version": "1.0.0"
+    }
+  ],
+  "assets": [
+    {
+      "id": "interverse:body/humanoid-base",
+      "version": "1.0.0",
+      "uri": "/avatars/interverse-humanoid-v1.glb",
+      "kind": "body"
+    },
+    {
+      "id": "interverse:wearable/basic-shirt",
+      "version": "1.0.0",
+      "uri": "/avatars/basic-shirt.glb",
+      "kind": "wearable"
+    },
+    {
+      "id": "interverse:accessory/round-glasses",
+      "version": "1.0.0",
+      "uri": "/avatars/round-glasses.glb",
+      "kind": "accessory"
+    }
+  ],
+  "families": [
+    {
+      "id": "interverse:family/humanoid-v1",
+      "version": "1.0.0",
+      "rig": {
+        "id": "interverse:rig/humanoid-mixamo",
+        "version": "1.0.0"
+      },
+      "body": {
+        "asset": {
+          "id": "interverse:body/humanoid-base",
+          "version": "1.0.0"
+        },
+        "meshNode": "AvatarBody",
+        "regions": [
+          { "id": "neck", "indexOffset": 0, "indexCount": 600 },
+          { "id": "torso.upper", "indexOffset": 600, "indexCount": 4200 },
+          { "id": "torso.lower", "indexOffset": 4800, "indexCount": 3000 },
+          { "id": "pelvis", "indexOffset": 7800, "indexCount": 2400 },
+          { "id": "arm.upper.left", "indexOffset": 10200, "indexCount": 1800 },
+          { "id": "arm.upper.right", "indexOffset": 12000, "indexCount": 1800 },
+          { "id": "arm.lower.left", "indexOffset": 13800, "indexCount": 1800 },
+          { "id": "arm.lower.right", "indexOffset": 15600, "indexCount": 1800 },
+          { "id": "hand.left", "indexOffset": 17400, "indexCount": 1200 },
+          { "id": "hand.right", "indexOffset": 18600, "indexCount": 1200 },
+          { "id": "leg.upper.left", "indexOffset": 19800, "indexCount": 2700 },
+          { "id": "leg.upper.right", "indexOffset": 22500, "indexCount": 2700 },
+          { "id": "leg.lower.left", "indexOffset": 25200, "indexCount": 2400 },
+          { "id": "leg.lower.right", "indexOffset": 27600, "indexCount": 2400 },
+          { "id": "foot.left", "indexOffset": 30000, "indexCount": 1500 },
+          { "id": "foot.right", "indexOffset": 31500, "indexCount": 1500 }
+        ]
+      },
+      "head": {
+        "meshNode": "AvatarHead",
+        "neckSeamVertexGroup": "seam.neck"
+      },
+      "sockets": [
+        {
+          "id": "face.glasses",
+          "bone": "head",
+          "position": [0, 0.03, -0.1]
+        }
+      ],
+      "occlusionSurfaces": {
+        "eye.left": ["EyeLeft"],
+        "eye.right": ["EyeRight"],
+        "hair.top": ["HairTop"]
+      },
+      "materialChannels": [
+        {
+          "id": "skin",
+          "targets": [
+            { "meshNode": "AvatarBody", "materialName": "Skin" },
+            { "meshNode": "AvatarHead", "materialName": "Skin" }
+          ],
+          "properties": ["color", "roughness"]
+        }
+      ],
+      "morphBindings": [
+        { "channel": "body.archetype.masculine", "target": "body.archetype.masculine", "meshNode": "AvatarBody" },
+        { "channel": "body.archetype.feminine", "target": "body.archetype.feminine", "meshNode": "AvatarBody" },
+        { "channel": "body.shoulderWidth", "target": "body.shoulderWidth", "meshNode": "AvatarBody" },
+        { "channel": "body.chestVolume", "target": "body.chestVolume", "meshNode": "AvatarBody" },
+        { "channel": "body.waistWidth", "target": "body.waistWidth", "meshNode": "AvatarBody" },
+        { "channel": "body.hipWidth", "target": "body.hipWidth", "meshNode": "AvatarBody" },
+        { "channel": "body.gluteVolume", "target": "body.gluteVolume", "meshNode": "AvatarBody" },
+        { "channel": "body.muscularity", "target": "body.muscularity", "meshNode": "AvatarBody" },
+        { "channel": "body.bodyFat", "target": "body.bodyFat", "meshNode": "AvatarBody" },
+        { "channel": "body.armThickness", "target": "body.armThickness", "meshNode": "AvatarBody" },
+        { "channel": "body.legThickness", "target": "body.legThickness", "meshNode": "AvatarBody" },
+        { "channel": "head.width", "target": "head.width", "meshNode": "AvatarHead" },
+        { "channel": "head.height", "target": "head.height", "meshNode": "AvatarHead" },
+        { "channel": "head.depth", "target": "head.depth", "meshNode": "AvatarHead" },
+        { "channel": "face.width", "target": "face.width", "meshNode": "AvatarHead" },
+        { "channel": "face.length", "target": "face.length", "meshNode": "AvatarHead" },
+        { "channel": "jaw.width", "target": "jaw.width", "meshNode": "AvatarHead" },
+        { "channel": "cheek.fullness", "target": "cheek.fullness", "meshNode": "AvatarHead" },
+        { "channel": "nose.width", "target": "nose.width", "meshNode": "AvatarHead" },
+        { "channel": "eye.spacing", "target": "eye.spacing", "meshNode": "AvatarHead" },
+        { "channel": "mouth.width", "target": "mouth.width", "meshNode": "AvatarHead" }
+      ],
+      "defaultMorphs": {
+        "body.archetype.masculine": 0,
+        "body.archetype.feminine": 0
+      },
+      "defaultAppearance": {
+        "skin": { "color": "#b87356", "roughness": 0.7 }
+      }
+    }
+  ],
+  "items": [
+    {
+      "id": "interverse:wearable/basic-shirt",
+      "version": "1.0.0",
+      "name": "Basic Shirt",
+      "kind": "wearable",
+      "compatibility": {
+        "families": [
+          { "id": "interverse:family/humanoid-v1", "version": "1.0.0" }
+        ],
+        "rig": { "id": "interverse:rig/humanoid-mixamo", "version": "1.0.0" }
+      },
+      "render": {
+        "type": "skinned",
+        "asset": { "id": "interverse:wearable/basic-shirt", "version": "1.0.0" },
+        "meshNodes": ["BasicShirt"]
+      },
+      "occupies": ["upper.base"],
+      "coversBody": ["torso.upper", "torso.lower"],
+      "morphBindings": [
+        { "channel": "body.archetype.masculine", "target": "body.archetype.masculine", "meshNode": "BasicShirt" },
+        { "channel": "body.archetype.feminine", "target": "body.archetype.feminine", "meshNode": "BasicShirt" },
+        { "channel": "body.shoulderWidth", "target": "body.shoulderWidth", "meshNode": "BasicShirt" },
+        { "channel": "body.chestVolume", "target": "body.chestVolume", "meshNode": "BasicShirt" },
+        { "channel": "body.waistWidth", "target": "body.waistWidth", "meshNode": "BasicShirt" }
+      ]
+    },
+    {
+      "id": "interverse:accessory/round-glasses",
+      "version": "1.0.0",
+      "name": "Round Glasses",
+      "kind": "accessory",
+      "compatibility": {
+        "families": [
+          { "id": "interverse:family/humanoid-v1", "version": "1.0.0" }
+        ]
+      },
+      "render": {
+        "type": "socket",
+        "asset": { "id": "interverse:accessory/round-glasses", "version": "1.0.0" },
+        "socket": "face.glasses"
+      },
+      "occupies": ["face.eyes"]
+    }
+  ]
+}
