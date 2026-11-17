@@ -63,6 +63,7 @@ function discardUnselectedMeshes(all: readonly SkinnedMesh[], selected: readonly
 
 export class EquipmentController {
   private readonly equipped = new Map<string, InternalEquippedAvatarItem>();
+  private reservedInstanceIds = new Set<string>();
   private operationQueue: Promise<unknown> = Promise.resolve();
   private instanceCounter = 1;
   private disposed = false;
@@ -107,6 +108,14 @@ export class EquipmentController {
 
   list(): EquippedAvatarItem[] {
     return [...this.equipped.values()];
+  }
+
+  /**
+   * Instance IDs held by saved equipment that could not be restored. Generated
+   * IDs skip them, so a new item never shadows an unresolved one on save.
+   */
+  setReservedInstanceIds(instanceIds: Iterable<string>): void {
+    this.reservedInstanceIds = new Set(instanceIds);
   }
 
   /** Adjust a socket item in socket-local coordinates, or reset its authored fit. */
@@ -279,7 +288,7 @@ export class EquipmentController {
 
   private generateInstanceId(): string {
     let candidate = `item-${this.instanceCounter}`;
-    while (this.equipped.has(candidate)) {
+    while (this.equipped.has(candidate) || this.reservedInstanceIds.has(candidate)) {
       this.instanceCounter += 1;
       candidate = `item-${this.instanceCounter}`;
     }

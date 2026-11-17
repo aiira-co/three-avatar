@@ -1,4 +1,4 @@
-import { Box3, Group, SkinnedMesh, Vector3 } from 'three';
+import { Box3, Group, Object3D, SkinnedMesh, Vector3 } from 'three';
 import type { AppearanceController } from '../appearance/AppearanceController.js';
 import type { OcclusionSurfaceController } from '../appearance/OcclusionSurfaceController.js';
 import type { LoadedAvatarAsset } from '../assets/AvatarAssetLoader.js';
@@ -35,6 +35,7 @@ export class AvatarInstance {
   private scale = 1;
   private metadata: Record<string, unknown> | undefined;
   private residual: AvatarResidualState | undefined;
+  private readonly measuredInfluences = new WeakMap<SkinnedMesh, number[]>();
   private disposed = false;
 
   constructor(
@@ -85,16 +86,22 @@ export class AvatarInstance {
         && Object.keys(residual.appearance).length === 0
         && residual.equipment.length === 0);
     this.residual = isEmpty ? undefined : structuredClone(residual);
+    this.equipment.setReservedInstanceIds(this.residual?.equipment.map((entry) => entry.instanceId) ?? []);
   }
 
   getBounds(options: AvatarBoundsOptions = {}): AvatarBounds {
     this.root.updateMatrixWorld(true);
     const bounds = new Box3();
     if (options.includeEquipment) {
+      this.root.traverse((object) => this.refreshMorphedBounds(object));
       bounds.setFromObject(this.root);
     } else {
+      this.refreshMorphedBounds(this.bodyMesh);
       bounds.expandByObject(this.bodyMesh);
-      if (this.headMesh) bounds.expandByObject(this.headMesh);
+      if (this.headMesh) {
+        this.refreshMorphedBounds(this.headMesh);
+        bounds.expandByObject(this.headMesh);
+      }
     }
     if (bounds.isEmpty()) return { size: new Vector3(), center: new Vector3() };
     return {
@@ -152,6 +159,20 @@ export class AvatarInstance {
       if (!emitted.has(entry.instanceId)) ordered.push(entry);
     }
     return ordered;
+  }
+
+  /**
+   * A SkinnedMesh caches its bounding box, morphs included, the first time it
+   * is measured. Recompute it only when its morph influences have moved since.
+   */
+  private refreshMorphedBounds(object: Object3D): void {
+    const mesh = object as SkinnedMesh;
+    const influences = mesh.isSkinnedMesh ? mesh.morphTargetInfluences : undefined;
+    if (!influences?.length) return;
+    const measured = this.measuredInfluences.get(mesh);
+    if (measured?.length === influences.length && measured.every((value, index) => value === influences[index])) return;
+    mesh.computeBoundingBox();
+    this.measuredInfluences.set(mesh, [...influences]);
   }
 
   private assertActive(): void {

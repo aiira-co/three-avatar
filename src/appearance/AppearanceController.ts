@@ -8,6 +8,8 @@ import type {
 interface MaterialBinding {
   material: Material & Record<string, unknown>;
   properties: Set<AvatarMaterialProperty>;
+  /** Alpha blending the asset authored (hair cards, lashes); opacity never turns it off. */
+  authoredTransparent: boolean;
 }
 
 function asColor(value: unknown): Color | undefined {
@@ -21,6 +23,7 @@ export class AppearanceController {
 
   bind(root: Object3D, definitions: readonly MaterialChannelDefinition[], scope: string): void {
     const prepared = new Map<Mesh, Material[]>();
+    const authoredTransparent = new Map<Material, boolean>();
 
     const prepareMesh = (mesh: Mesh): Material[] => {
       const existing = prepared.get(mesh);
@@ -29,6 +32,7 @@ export class AppearanceController {
       const cloned = source.map((material) => material.clone());
       mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0]!;
       prepared.set(mesh, cloned);
+      for (const material of cloned) authoredTransparent.set(material, material.transparent);
       const scopeMaterials = this.materialsByScope.get(scope) ?? new Set<Material>();
       for (const material of cloned) scopeMaterials.add(material);
       this.materialsByScope.set(scope, scopeMaterials);
@@ -50,6 +54,7 @@ export class AppearanceController {
             resolved.push({
               material: material as Material & Record<string, unknown>,
               properties: new Set(definition.properties),
+              authoredTransparent: authoredTransparent.get(material) ?? false,
             });
           });
         });
@@ -130,7 +135,7 @@ export class AppearanceController {
         if (propertyValue !== undefined && binding.properties.has(property)) material[property] = propertyValue;
       }
       if (value.opacity !== undefined && binding.properties.has('opacity')) {
-        material['transparent'] = value.opacity < 1;
+        material['transparent'] = binding.authoredTransparent || value.opacity < 1;
       }
       material.needsUpdate = true;
     }

@@ -23,9 +23,13 @@ const refs = {
   pairAsset: { id: 'test:asset/pair', version: '1.0.0' },
   hatAsset: { id: 'test:asset/hat', version: '1.0.0' },
   capAsset: { id: 'test:asset/cap', version: '1.0.0' },
+  fittedAsset: { id: 'test:asset/fitted', version: '1.0.0' },
+  hairAsset: { id: 'test:asset/hair', version: '1.0.0' },
   shirt: { id: 'test:item/shirt', version: '1.0.0' },
   hat: { id: 'test:item/hat', version: '1.0.0' },
   cap: { id: 'test:item/cap', version: '1.0.0' },
+  fitted: { id: 'test:item/fitted', version: '1.0.0' },
+  hair: { id: 'test:item/hair', version: '1.0.0' },
   missing: { id: 'test:item/missing', version: '1.0.0' },
 };
 
@@ -75,6 +79,19 @@ function createBodyAsset() {
   return root;
 }
 
+// Alpha-blended hair cards over an opaque cap, both tinted by one channel.
+function createHairAsset() {
+  const root = new Group();
+  root.name = 'Hair';
+  for (const [name, transparent] of [['HairCards', true], ['HairCap', false]]) {
+    const geometry = new BufferGeometry().setAttribute('position', new Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+    const mesh = new Mesh(geometry, new MeshStandardMaterial({ transparent }));
+    mesh.name = name;
+    root.add(mesh);
+  }
+  return root;
+}
+
 class TestLoader {
   constructor() {
     this.factories = new Map([
@@ -82,6 +99,8 @@ class TestLoader {
       ['test:asset/pair@1.0.0', () => createSkinnedAsset(['Selected', 'Unselected'])],
       ['test:asset/hat@1.0.0', () => { const g = new Group(); g.name = 'Hat'; return g; }],
       ['test:asset/cap@1.0.0', () => { const g = new Group(); g.name = 'Cap'; return g; }],
+      ['test:asset/fitted@1.0.0', () => createSkinnedAsset(['Fitted'], ['fit.loose'])],
+      ['test:asset/hair@1.0.0', createHairAsset],
     ]);
   }
 
@@ -153,6 +172,8 @@ function createRegistry({ withSuccessor = false } = {}) {
       { ...refs.pairAsset, uri: '/pair.glb', kind: 'wearable' },
       { ...refs.hatAsset, uri: '/hat.glb', kind: 'accessory' },
       { ...refs.capAsset, uri: '/cap.glb', kind: 'accessory' },
+      { ...refs.fittedAsset, uri: '/fitted.glb', kind: 'wearable' },
+      { ...refs.hairAsset, uri: '/hair.glb', kind: 'hair' },
     ],
     families: withSuccessor
       ? [createFamily('2.0.0', { supersedes: [refs.family] })]
@@ -181,6 +202,27 @@ function createRegistry({ withSuccessor = false } = {}) {
         render: { type: 'socket', asset: refs.capAsset, socket: 'head.top' },
         occupies: ['head.base'],
         occludes: ['hair.all'],
+      },
+      {
+        ...refs.fitted,
+        kind: 'wearable',
+        compatibility: { families: compatibleFamilies },
+        render: { type: 'skinned', asset: refs.fittedAsset, meshNodes: ['Fitted'] },
+        occupies: ['lower.base'],
+        // A channel only this garment defines; the family knows nothing of it.
+        morphBindings: [{ channel: 'fit.loose', target: 'fit.loose', meshNode: 'Fitted' }],
+      },
+      {
+        ...refs.hair,
+        kind: 'hair',
+        compatibility: { families: compatibleFamilies },
+        render: { type: 'socket', asset: refs.hairAsset, socket: 'head.top' },
+        occupies: ['hair'],
+        materialChannels: [{
+          id: 'tint',
+          targets: [{ meshNode: 'HairCards' }, { meshNode: 'HairCap' }],
+          properties: ['color', 'opacity'],
+        }],
       },
     ],
   });
@@ -291,6 +333,27 @@ test('generated instance IDs never collide with restored ones', async () => {
   restored.dispose();
 });
 
+test('generated instance IDs never take the ID of an unresolved saved item', async () => {
+  const runtime = createRuntime();
+  const avatar = await runtime.create({ family: refs.family });
+  await avatar.equipment.equip(refs.hat);
+  const saved = avatar.serialize();
+  avatar.dispose();
+  // Saved by a client that has an item pack this one lacks.
+  saved.equipment.push({ instanceId: 'item-2', item: refs.missing });
+
+  const restored = await runtime.fromJSON(saved);
+  const shirt = await restored.equipment.equip(refs.shirt);
+  assert.notEqual(shirt.instanceId, 'item-2');
+
+  // The unresolved item is still there after the next save.
+  assert.deepEqual(
+    restored.serialize().equipment.map((entry) => [entry.instanceId, entry.item.id]),
+    [['item-1', refs.hat.id], ['item-2', refs.missing.id], [shirt.instanceId, refs.shirt.id]],
+  );
+  restored.dispose();
+});
+
 test('registry definitions are immutable once installed', () => {
   const registry = createRegistry();
   const family = registry.requireFamily(refs.family);
@@ -306,6 +369,19 @@ test('a rejected appearance channel is not retained in serialized state', async 
 
   avatar.setAppearance('skin', { color: '#b87356' });
   assert.deepEqual(avatar.serialize().appearance, { skin: { color: '#b87356' } });
+  avatar.dispose();
+});
+
+test('opacity keeps authored alpha blending and only adds blending below 1', async () => {
+  const avatar = await createRuntime().create({ family: refs.family });
+  const opaque = await avatar.equipment.equip(refs.hair, { instanceId: 'hair', appearance: { tint: { opacity: 1 } } });
+  assert.equal(opaque.root.getObjectByName('HairCards').material.transparent, true);
+  assert.equal(opaque.root.getObjectByName('HairCap').material.transparent, false);
+
+  await avatar.equipment.unequip('hair');
+  const sheer = await avatar.equipment.equip(refs.hair, { instanceId: 'hair', appearance: { tint: { opacity: 0.5 } } });
+  assert.equal(sheer.root.getObjectByName('HairCards').material.transparent, true);
+  assert.equal(sheer.root.getObjectByName('HairCap').material.transparent, true);
   avatar.dispose();
 });
 
@@ -342,6 +418,33 @@ test('getBounds tracks the body by default and equipment only on request', async
 
   assert.deepEqual(avatar.getBounds().size.toArray(), bodyOnly);
   assert.notDeepEqual(avatar.getBounds({ includeEquipment: true }).size.toArray(), bodyOnly);
+  avatar.dispose();
+});
+
+test('getBounds follows morph influences and skips the recompute when none moved', async () => {
+  const avatar = await createRuntime().create({ family: refs.family });
+  const geometry = avatar.bodyMesh.geometry;
+  // Give jawOpen a real shape: it lifts the top vertex by one unit.
+  geometry.morphTargetsRelative = true;
+  geometry.morphAttributes.position[FACE_MORPHS.indexOf('jawOpen')].setY(5, 1);
+  const rest = avatar.getBounds().size.y;
+
+  avatar.morphs.set('face.jawOpen', 1);
+  assert.equal(avatar.getBounds().size.y, rest + 1);
+  assert.equal(avatar.getBounds({ includeEquipment: true }).size.y, rest + 1);
+
+  let recomputed = 0;
+  const compute = avatar.bodyMesh.computeBoundingBox;
+  avatar.bodyMesh.computeBoundingBox = function () {
+    recomputed += 1;
+    return compute.call(this);
+  };
+  avatar.getBounds();
+  assert.equal(recomputed, 0);
+
+  avatar.morphs.set('face.jawOpen', 0);
+  assert.equal(avatar.getBounds().size.y, rest);
+  assert.equal(recomputed, 1);
   avatar.dispose();
 });
 
@@ -401,6 +504,28 @@ test('strict restore refuses state the current family cannot fully apply', async
     () => runtime.create({ family: refs.family, state: saved, strict: true }),
     /body\.retiredChannel/,
   );
+});
+
+test('morph channels only an equipped item defines restore with that item', async () => {
+  const runtime = createRuntime();
+  const avatar = await runtime.create({ family: refs.family });
+  await avatar.equipment.equip(refs.fitted, { instanceId: 'fitted' });
+  avatar.morphs.set('fit.loose', 0.6);
+  const saved = avatar.serialize();
+  avatar.dispose();
+
+  // An avatar's own save must restore strictly.
+  const restored = await runtime.fromJSON(saved, { strict: true });
+  const fitted = restored.equipment.list()[0].root.getObjectByName('Fitted');
+  assert.equal(fitted.morphTargetInfluences[0], 0.6);
+  assert.deepEqual(restored.serialize(), saved);
+  restored.dispose();
+
+  const issues = [];
+  const tolerant = await runtime.fromJSON(saved, { onStateIssue: (issue) => issues.push(issue) });
+  assert.deepEqual(issues, []);
+  assert.equal(tolerant.getResidualState(), undefined);
+  tolerant.dispose();
 });
 
 test('family validation rejects self-supersession and duplicate sockets', () => {

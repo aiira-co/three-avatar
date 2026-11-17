@@ -165,14 +165,12 @@ export class AvatarRuntime {
 
         if (state.body.scale !== undefined) avatar.setScale(state.body.scale);
 
+        // A channel only an item defines (a garment's fit) is unknown until that
+        // item is equipped, so it is applied after equipment.
+        const deferredMorphs: [string, number][] = [];
         for (const [channel, value] of Object.entries(state.body.morphs)) {
-          if (morphs.has(channel)) {
-            morphs.set(channel, value);
-            continue;
-          }
-          if (strict) throw new Error(`Saved morph channel "${channel}" is not defined by family ${versionedKey(family)}`);
-          residual.morphs[channel] = value;
-          report({ kind: 'morph', channel });
+          if (morphs.has(channel)) morphs.set(channel, value);
+          else deferredMorphs.push([channel, value]);
         }
 
         for (const [channel, value] of Object.entries(state.appearance)) {
@@ -201,6 +199,16 @@ export class AvatarRuntime {
             if (strict || (options.strictEquipment ?? false)) throw error;
             residual.equipment.push(item);
           }
+        }
+
+        for (const [channel, value] of deferredMorphs) {
+          if (morphs.has(channel)) {
+            morphs.set(channel, value);
+            continue;
+          }
+          if (strict) throw new Error(`Saved morph channel "${channel}" is not defined by family ${versionedKey(family)} or its equipment`);
+          residual.morphs[channel] = value;
+          report({ kind: 'morph', channel });
         }
 
         avatar.setResidualState(residual);
