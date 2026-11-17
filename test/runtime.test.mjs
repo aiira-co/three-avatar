@@ -278,3 +278,29 @@ test('serialized avatars restore equipment and exact local asset references', as
   avatar.dispose();
   restored.dispose();
 });
+
+test('socket fit adjustments restore over the authored fit and reset to it', async () => {
+  const runtime = new AvatarRuntime(createRegistry(), new TestLoader());
+  const avatar = await runtime.create({ family: refs.family });
+  const item = await avatar.equipment.equip(refs.patch, { instanceId: 'patch' });
+  const fitted = item.root.position.toArray();
+  const rotation = [0, Math.sin(Math.PI / 12), 0, Math.cos(Math.PI / 12)];
+  avatar.equipment.setSocketTransform('patch', { position: [0.03, 0, 0], rotation, scale: [1.2, 1.2, 1.2] });
+  const state = avatar.serialize();
+  const restored = await runtime.fromJSON(JSON.parse(JSON.stringify(state)), { strict: true });
+  const patch = restored.equipment.list()[0];
+  assert.deepEqual(restored.serialize(), state);
+  assert.equal(patch.root.parent, restored.sockets.require('face.left'));
+  assert.deepEqual(patch.root.position.toArray(), [fitted[0] + 0.03, fitted[1], fitted[2]]);
+  assert.deepEqual(patch.root.scale.toArray(), [1.2, 1.2, 1.2]);
+  assert.throws(() => restored.equipment.setSocketTransform('patch', { scale: [1, 0, 1] }), /greater than zero/);
+  assert.throws(() => restored.equipment.setSocketTransform('patch', { rotation: [0, 0, 0, 0] }), /unit quaternion/);
+  assert.deepEqual(restored.serialize(), state);
+  const shirt = await restored.equipment.equip(refs.shirt);
+  assert.throws(() => restored.equipment.setSocketTransform(shirt.instanceId, { position: [0.03, 0, 0] }), /not socket-mounted/);
+  restored.equipment.setSocketTransform('patch');
+  assert.deepEqual(patch.root.position.toArray(), fitted);
+  assert.equal(restored.serialize().equipment[0].transform, undefined);
+  avatar.dispose();
+  restored.dispose();
+});

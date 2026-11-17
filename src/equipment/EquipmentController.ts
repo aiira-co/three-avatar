@@ -1,4 +1,4 @@
-import { Group, Object3D, SkinnedMesh } from 'three';
+import { Box3, Group, Matrix4, Mesh, Object3D, Quaternion, SkinnedMesh, Vector3 } from 'three';
 import type { AppearanceController } from '../appearance/AppearanceController.js';
 import type { OcclusionSurfaceController } from '../appearance/OcclusionSurfaceController.js';
 import type { AvatarAssetLoader, LoadedAvatarAsset } from '../assets/AvatarAssetLoader.js';
@@ -9,9 +9,10 @@ import type {
   AvatarFamilyDefinition,
   AvatarItemDefinition,
   EquippedAvatarItemState,
+  SerializableTransform,
   VersionedId,
 } from '../format/types.js';
-import { versionedKey } from '../format/validation.js';
+import { parseSocketTransform, versionedKey } from '../format/validation.js';
 import type { AvatarAssetRegistry } from '../registry/AvatarAssetRegistry.js';
 import type { AvatarRig } from '../rig/AvatarRig.js';
 import type { AvatarSocketController } from '../rig/AvatarSocketController.js';
@@ -22,16 +23,20 @@ export interface EquippedAvatarItem {
   readonly definition: AvatarItemDefinition;
   readonly root: Object3D;
   readonly appearance: Record<string, AvatarAppearanceValue>;
+  readonly transform?: SerializableTransform;
 }
 
 interface InternalEquippedAvatarItem extends EquippedAvatarItem {
   loaded: LoadedAvatarAsset;
   scope: string;
+  fitPivot?: Vector3;
+  transform?: SerializableTransform;
 }
 
 export interface EquipOptions {
   instanceId?: string;
   appearance?: Record<string, AvatarAppearanceValue>;
+  transform?: SerializableTransform;
   signal?: AbortSignal;
 }
 
@@ -104,6 +109,17 @@ export class EquipmentController {
     return [...this.equipped.values()];
   }
 
+  /** Adjust a socket item in socket-local coordinates, or reset its authored fit. */
+  setSocketTransform(instanceId: string, transform?: SerializableTransform): void {
+    this.assertActive();
+    const entry = this.equipped.get(instanceId);
+    if (!entry || entry.definition.render.type !== 'socket') {
+      throw new Error(`Equipment "${instanceId}" is not socket-mounted`);
+    }
+    entry.transform = transform === undefined ? undefined : parseSocketTransform(transform);
+    this.attachSocketItem(entry.definition.render, entry.root, entry.transform, entry.fitPivot);
+  }
+
   serialize(): EquippedAvatarItemState[] {
     return [...this.equipped.values()].map((entry) => ({
       instanceId: entry.instanceId,
@@ -111,6 +127,7 @@ export class EquipmentController {
       ...(Object.keys(entry.appearance).length === 0
         ? {}
         : { appearance: structuredClone(entry.appearance) }),
+      ...(entry.transform && { transform: structuredClone(entry.transform) }),
     }));
   }
 
@@ -127,6 +144,10 @@ export class EquipmentController {
     const instanceId = options.instanceId ?? this.generateInstanceId();
     if (this.equipped.has(instanceId)) throw new Error(`Equipment instance "${instanceId}" already exists`);
 
+    const transform = options.transform === undefined ? undefined : parseSocketTransform(options.transform);
+    if (transform && definition.render.type !== 'socket') {
+      throw new Error(`Equipment "${instanceId}" is not socket-mounted`);
+    }
     const loaded = await this.loader.load(definition.render.asset, options.signal);
     if (this.disposed) {
       loaded.dispose?.();
@@ -155,10 +176,11 @@ export class EquipmentController {
       const conflicts = this.findConflicts(definition);
       for (const conflict of conflicts) this.remove(conflict.instanceId);
 
+      const fitPivot = definition.render.type === 'socket' ? this.socketFitPivot(loaded.root) : undefined;
       if (definition.render.type === 'skinned') {
         this.equipmentRoot.add(loaded.root);
       } else {
-        this.sockets.attach(definition.render.socket, loaded.root, definition.render.transform);
+        this.attachSocketItem(definition.render, loaded.root, transform, fitPivot);
       }
 
       const entry: InternalEquippedAvatarItem = {
@@ -166,6 +188,8 @@ export class EquipmentController {
         definition,
         root: loaded.root,
         appearance: structuredClone(options.appearance ?? {}),
+        transform,
+        fitPivot,
         loaded,
         scope,
       };
@@ -178,6 +202,43 @@ export class EquipmentController {
       this.morphController.unbindScope(scope);
       loaded.dispose?.();
       throw error;
+    }
+  }
+
+  private socketFitPivot(root: Object3D): Vector3 {
+    root.updateWorldMatrix(true, true);
+    const inverseRoot = root.matrixWorld.clone().invert();
+    const bounds = new Box3();
+    const meshBounds = new Box3();
+    const local = new Matrix4();
+    root.traverse(object => {
+      const mesh = object as Mesh;
+      if (!mesh.isMesh) return;
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      const geometryBounds = mesh.geometry.boundingBox;
+      if (geometryBounds && !geometryBounds.isEmpty()) {
+        local.multiplyMatrices(inverseRoot, mesh.matrixWorld);
+        bounds.union(meshBounds.copy(geometryBounds).applyMatrix4(local));
+      }
+    });
+    return bounds.getCenter(new Vector3());
+  }
+
+  private attachSocketItem(
+    render: Extract<AvatarItemDefinition['render'], { type: 'socket' }>,
+    root: Object3D,
+    adjustment?: SerializableTransform,
+    pivot?: Vector3,
+  ): void {
+    this.sockets.attach(render.socket, root, render.transform);
+    if (adjustment?.position) root.position.add(new Vector3(...adjustment.position));
+    if (!adjustment?.rotation && !adjustment?.scale) return;
+    const before = pivot?.clone().multiply(root.scale).applyQuaternion(root.quaternion);
+    if (adjustment.rotation) root.quaternion.multiply(new Quaternion(...adjustment.rotation).normalize());
+    if (adjustment.scale) root.scale.multiply(new Vector3(...adjustment.scale));
+    if (before && pivot) {
+      const after = pivot.clone().multiply(root.scale).applyQuaternion(root.quaternion);
+      root.position.add(before.sub(after));
     }
   }
 

@@ -37,7 +37,7 @@ export class AvatarSocketController {
 
   attach(id: string, object: Object3D, transform?: SerializableTransform): void {
     const socket = this.require(id);
-    socket.add(object);
+    if (object.parent !== socket) socket.add(object);
     applyTransform(object, transform);
   }
 

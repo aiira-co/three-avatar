@@ -191,6 +191,8 @@ export interface EquippedAvatarItemState {
   instanceId: string;
   item: VersionedId;
   appearance?: Record<MaterialChannelId, AvatarAppearanceValue>;
+  /** User adjustment relative to the authored fit of a socket-mounted item. */
+  transform?: SerializableTransform;
 }
 
 export interface AvatarStateV1 {

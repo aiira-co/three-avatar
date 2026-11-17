@@ -192,6 +192,7 @@ export class AvatarRuntime {
             await equipment.equip(item.item, {
               instanceId: item.instanceId,
               appearance: item.appearance,
+              transform: item.transform,
               signal: options.signal,
             });
           } catch (error) {

@@ -6,6 +6,7 @@ import type {
   AvatarRigDefinition,
   AvatarStateV1,
   BodyRegionDefinition,
+  SerializableTransform,
   VersionedId,
 } from './types.js';
 
@@ -94,6 +95,35 @@ function parseNumberMap(value: unknown, path: string): Record<string, number> {
   );
 }
 
+/** Validate a user fit adjustment before saving it or applying it to a live socket. */
+export function parseSocketTransform(value: unknown, path = 'transform'): SerializableTransform {
+  const entry = requireRecord(value, path);
+  const tuple = (key: string, size: number): number[] | undefined => {
+    const values = entry[key];
+    if (values === undefined) return undefined;
+    if (!Array.isArray(values) || values.length !== size ||
+        !Array.from(values).every(value => typeof value === 'number' && Number.isFinite(value))) {
+      throw new AvatarValidationError(`${path}.${key}`, `expected ${size} finite numbers`);
+    }
+    return [...values];
+  };
+
+  const position = tuple('position', 3) as SerializableTransform['position'];
+  const rotation = tuple('rotation', 4) as SerializableTransform['rotation'];
+  const scale = tuple('scale', 3) as SerializableTransform['scale'];
+  if (rotation && Math.abs(Math.hypot(...rotation) - 1) > 0.001) {
+    throw new AvatarValidationError(`${path}.rotation`, 'expected a unit quaternion');
+  }
+  if (scale?.some(axis => axis <= 0)) {
+    throw new AvatarValidationError(`${path}.scale`, 'all axes must be greater than zero');
+  }
+  return {
+    ...(position && { position }),
+    ...(rotation && { rotation }),
+    ...(scale && { scale }),
+  };
+}
+
 export function parseAvatarState(value: unknown): AvatarStateV1 {
   const object = requireRecord(value, '$');
   if (object['schema'] !== AVATAR_SCHEMA) {
@@ -125,6 +155,9 @@ export function parseAvatarState(value: unknown): AvatarStateV1 {
       ...(item['appearance'] === undefined
         ? {}
         : { appearance: parseAppearanceMap(item['appearance'], `${path}.appearance`) }),
+      ...(item['transform'] === undefined
+        ? {}
+        : { transform: parseSocketTransform(item['transform'], `${path}.transform`) }),
     };
   });
 
