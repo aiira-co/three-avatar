@@ -590,6 +590,16 @@ export function upsertRelativeMorphTarget(
     mesh.geometry.morphTargetsRelative = true;
   }
 
+  // GLTFLoader populates morphTargetDictionary from extras.targetNames while leaving
+  // morphAttributes.position[i].name empty; backfill names so subsequent updates keep them.
+  const oldDict = mesh.morphTargetDictionary ?? {};
+  const targets = [...existingTargets];
+  for (const [targetName, idx] of Object.entries(oldDict)) {
+    if (targets[idx] && !targets[idx].name) {
+      targets[idx].name = targetName;
+    }
+  }
+
   // Convert delta to absolute coordinates only if the mesh already carries non-relative targets.
   let stored = delta;
   if (!mesh.geometry.morphTargetsRelative) {
@@ -601,17 +611,11 @@ export function upsertRelativeMorphTarget(
     }
   }
 
-  // Snapshot existing influences before updateMorphTargets() resets the array.
-  const preserved = new Map<string, number>();
-  const oldDict = mesh.morphTargetDictionary ?? {};
-  const oldInfluences = mesh.morphTargetInfluences ?? [];
-  for (const [targetName, idx] of Object.entries(oldDict)) {
-    const val = oldInfluences[idx];
-    if (val !== undefined) preserved.set(targetName, val);
-  }
-
-  const targets = [...existingTargets];
-  const existingIdx = targets.findIndex((entry) => entry.name === name);
+  const dictIdx = oldDict[name];
+  const existingIdx =
+    dictIdx !== undefined && dictIdx < targets.length
+      ? dictIdx
+      : targets.findIndex((entry) => entry.name === name);
   const attribute = new Float32BufferAttribute(stored, 3);
   attribute.name = name;
 
@@ -622,6 +626,28 @@ export function upsertRelativeMorphTarget(
   }
   mesh.geometry.morphAttributes['position'] = targets;
 
+  // Keep morphAttributes.normal (when present) matching morphAttributes.position length.
+  const existingNormals = mesh.geometry.morphAttributes['normal'];
+  if (existingNormals && existingNormals.length < targets.length) {
+    const baseNormal = mesh.geometry.morphTargetsRelative ? undefined : mesh.geometry.getAttribute('normal');
+    const fallbackNormal = baseNormal ? new Float32Array(position.count * 3) : undefined;
+    if (baseNormal && fallbackNormal) {
+      for (let i = 0; i < position.count; i++) {
+        fallbackNormal[i * 3] = baseNormal.getX(i);
+        fallbackNormal[i * 3 + 1] = baseNormal.getY(i);
+        fallbackNormal[i * 3 + 2] = baseNormal.getZ(i);
+      }
+    }
+    for (let i = existingNormals.length; i < targets.length; i++) {
+      const normalAttr = new Float32BufferAttribute(
+        fallbackNormal ? fallbackNormal.slice() : new Float32Array(position.count * 3),
+        3,
+      );
+      normalAttr.name = targets[i]!.name;
+      existingNormals.push(normalAttr);
+    }
+  }
+
   // Keep GLTF targetNames extras in sync if present so updateMorphTargets maps names cleanly.
   const userData = mesh.geometry.userData as { targetNames?: string[] };
   if (Array.isArray(userData.targetNames)) {
@@ -631,18 +657,36 @@ export function upsertRelativeMorphTarget(
     userData.targetNames = nextNames;
   }
 
-  mesh.updateMorphTargets();
-  if (mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
-    for (const [targetName, idx] of Object.entries(mesh.morphTargetDictionary)) {
-      if (targetName === name) continue;
-      const prev = preserved.get(targetName);
-      if (prev !== undefined) mesh.morphTargetInfluences[idx] = prev;
+  const oldInfluences = mesh.morphTargetInfluences;
+  if (mesh.morphTargetDictionary && oldInfluences && oldInfluences.length === existingTargets.length) {
+    if (existingIdx >= 0) {
+      mesh.morphTargetDictionary[name] = existingIdx;
+      oldInfluences[existingIdx] = influence;
+    } else {
+      mesh.morphTargetDictionary[name] = targets.length - 1;
+      oldInfluences.push(influence);
     }
-    const targetIdx = mesh.morphTargetDictionary[name];
-    if (targetIdx !== undefined) {
-      mesh.morphTargetInfluences[targetIdx] = influence;
+  } else {
+    // Snapshot existing influences before updateMorphTargets() resets the array.
+    const preserved = new Map<string, number>();
+    for (const [targetName, idx] of Object.entries(oldDict)) {
+      const val = oldInfluences?.[idx];
+      if (val !== undefined) preserved.set(targetName, val);
+    }
+    mesh.updateMorphTargets();
+    if (mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
+      for (const [targetName, idx] of Object.entries(mesh.morphTargetDictionary)) {
+        if (targetName === name) continue;
+        const prev = preserved.get(targetName);
+        if (prev !== undefined) mesh.morphTargetInfluences[idx] = prev;
+      }
+      const targetIdx = mesh.morphTargetDictionary[name];
+      if (targetIdx !== undefined) {
+        mesh.morphTargetInfluences[targetIdx] = influence;
+      }
     }
   }
+  mesh.geometry.dispose();
 }
 
 export function setMorphTargetInfluence(mesh: Mesh, name: string, influence: number): boolean {

@@ -200,6 +200,11 @@ export type HeadArchetypeRegionId =
 
 export type HeadLandmarkSet = Record<string, readonly [number, number, number]>;
 
+export interface SparseMorphTargetDefinition {
+  vertexIndices: number[];
+  deltas: number[];
+}
+
 export interface HeadArchetypeDefinition {
   id: string;
   label: string;
@@ -223,6 +228,7 @@ export interface HeadArchetypePack {
   blendHeight?: number;
   regionWeights?: Partial<Record<HeadArchetypeRegionId, number[]>>;
   archetypes: HeadArchetypeDefinition[];
+  expressionTargets?: Record<string, SparseMorphTargetDefinition>;
 }
 
 export type ExpressionMoodId =

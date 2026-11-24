@@ -348,3 +348,50 @@ test('sheared-ellipsoid eyeBlinkLeft lowers outer upper lid cleanly even when ra
   };
   assert.ok(shearedR(vx + dx, vy + dy, vz + dz) >= shearedR(vx, vy, vz) - 1e-4);
 });
+
+test('installProceduralExpressionTargets applies sculptedTargets with neck lock while keeping procedural defaults elsewhere', () => {
+  const { mesh, landmarks } = createExpressionHeadMesh();
+  // Indices in createExpressionHeadMesh(): 0 is neck (y=0.785), 1 is below-neck (y=0.77),
+  // 14 is mouthCenter (0, 0.85, 0.068), 15 is mouthCornerL, 17 is chin.
+  const installed = installProceduralExpressionTargets(mesh, landmarks, {
+    sculptedTargets: {
+      jawOpen: {
+        vertexIndices: [0, 1, 14, 17],
+        deltas: [
+          0.02, 0.02, 0.02, // neck seam vertex -> must be clamped to 0
+          0.02, 0.02, 0.02, // below-neck vertex -> must be clamped to 0
+          0.001, -0.019, -0.009,
+          0, -0.021, -0.007,
+        ],
+      },
+      mouthFunnel: {
+        vertexIndices: [14],
+        deltas: [0, -0.002, 0.007],
+      },
+      mouthPucker: {
+        vertexIndices: [14, 15],
+        deltas: [0, 0, 0.006, -0.005, 0, 0.005],
+      },
+    },
+  });
+
+  assert.equal(installed.length, ARKIT_CORE_EXPRESSION_CHANNELS.length);
+
+  const jawAttr = mesh.geometry.morphAttributes.position[mesh.morphTargetDictionary.jawOpen];
+  assert.equal(jawAttr.getX(0), 0);
+  assert.equal(jawAttr.getY(0), 0);
+  assert.equal(jawAttr.getZ(0), 0);
+  assert.equal(jawAttr.getX(1), 0);
+  assert.ok(Math.abs(jawAttr.getY(14) - -0.019) < 1e-6);
+  assert.ok(Math.abs(jawAttr.getY(17) - -0.021) < 1e-6);
+
+  const funnelAttr = mesh.geometry.morphAttributes.position[mesh.morphTargetDictionary.mouthFunnel];
+  assert.ok(Math.abs(funnelAttr.getZ(14) - 0.007) < 1e-6);
+
+  const puckerAttr = mesh.geometry.morphAttributes.position[mesh.morphTargetDictionary.mouthPucker];
+  assert.ok(Math.abs(puckerAttr.getX(15) - -0.005) < 1e-6);
+
+  // Unspecified channel still uses procedural landmark delta.
+  const smileAttr = mesh.geometry.morphAttributes.position[mesh.morphTargetDictionary.mouthSmileLeft];
+  assert.ok(smileAttr.getY(15) > 0.004);
+});

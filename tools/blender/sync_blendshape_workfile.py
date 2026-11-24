@@ -50,6 +50,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--morphs-json", help="Dumped morph targets JSON for --mode build")
     parser.add_argument("--blend-out", help="Output .blend path for --mode build")
     parser.add_argument("--head-json-out", help="Output sparse HeadArchetypePack JSON path for --mode export")
+    parser.add_argument(
+        "--expression-channels",
+        help="Comma-separated shape key names to export into expressionTargets alongside HeadArchetype_*",
+    )
     parser.add_argument("--glb-out", help="Optional output GLB with baked shape keys (excludes helper objects)")
     parser.add_argument("--neck-seam-y", type=float, default=0.785, help="Height below which head/archetype morphs lock to 0")
     parser.add_argument("--blend-height", type=float, default=0.025, help="Smoothstep blend height above neck seam")
@@ -421,6 +425,66 @@ def enforce_neck_lock_on_head_keys(body: bpy.types.Object, neck_lock: Sequence[f
         key.data.foreach_set("co", locked)
 
 
+def extract_sparse_expression_targets(
+    body: bpy.types.Object,
+    neck_lock: Sequence[float],
+    channels: Sequence[str],
+) -> Dict[str, Dict[str, List[float] | List[int]]]:
+    """Extract neck-locked sparse glTF deltas for sculpted facial expression shape keys."""
+    shape_keys = body.data.shape_keys
+    if shape_keys is None or "Basis" not in shape_keys.key_blocks:
+        raise RuntimeError("Input mesh has no Basis shape key for expression export")
+
+    basis = shape_keys.key_blocks["Basis"]
+    vcount = len(basis.data)
+    rot_world = body.matrix_world.to_3x3()
+    basis_co = np.empty(vcount * 3, dtype=np.float32)
+    basis.data.foreach_get("co", basis_co)
+    basis_3 = basis_co.reshape(-1, 3)
+
+    exported: Dict[str, Dict[str, List[float] | List[int]]] = {}
+    for channel in channels:
+        key = shape_keys.key_blocks.get(channel)
+        if key is None:
+            raise RuntimeError(f"Requested expression shape key '{channel}' not found on {body.name}")
+
+        key_co = np.empty(vcount * 3, dtype=np.float32)
+        key.data.foreach_get("co", key_co)
+        local_deltas = key_co.reshape(-1, 3) - basis_3
+
+        vertex_indices: List[int] = []
+        deltas: List[float] = []
+        max_mm = 0.0
+        raw_neck_clamped_mm = 0.0
+
+        for idx in range(vcount):
+            ld = local_deltas[idx]
+            if ld[0] == 0.0 and ld[1] == 0.0 and ld[2] == 0.0:
+                continue
+            raw_world = rot_world @ Vector((float(ld[0]), float(ld[1]), float(ld[2])))
+            lock = float(neck_lock[idx])
+            if lock == 0.0:
+                raw_neck_clamped_mm = max(raw_neck_clamped_mm, raw_world.length * 1000.0)
+                continue
+            locked_world = raw_world * lock
+            if locked_world.length > 1e-6:
+                gx, gy, gz = sha.blender_vec_to_gltf(locked_world)
+                vertex_indices.append(idx)
+                deltas.extend([gx, gy, gz])
+                max_mm = max(max_mm, locked_world.length * 1000.0)
+
+        exported[channel] = {
+            "vertexIndices": vertex_indices,
+            "deltas": deltas,
+        }
+        print(
+            f"EXPRESSION_TARGET {channel}: active_verts={len(vertex_indices)} "
+            f"max={max_mm:.2f}mm raw_neck_clamped={raw_neck_clamped_mm:.4f}mm"
+        )
+
+    return exported
+
+
 def mode_export(args: argparse.Namespace) -> None:
     body, armature = sha.load_scene(Path(args.input).resolve())
     slug = infer_slug(args)
@@ -441,6 +505,15 @@ def mode_export(args: argparse.Namespace) -> None:
             render_engine="CYCLES",
         )
         sha.export_and_render(body, metrics, regions, export_ns)
+
+        if args.expression_channels:
+            channels = [c.strip() for c in str(args.expression_channels).split(",") if c.strip()]
+            if channels:
+                expr_targets = extract_sparse_expression_targets(body, neck_lock, channels)
+                json_path = Path(args.head_json_out).resolve()
+                pack = json.loads(json_path.read_text(encoding="utf-8"))
+                pack["expressionTargets"] = expr_targets
+                json_path.write_text(json.dumps(pack, separators=(",", ":")), encoding="utf-8")
 
     if args.glb_out:
         glb_path = Path(args.glb_out).resolve()

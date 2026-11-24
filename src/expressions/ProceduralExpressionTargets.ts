@@ -1,5 +1,6 @@
 import { Mesh, Vector3 } from 'three';
 import { ARKIT_CORE_EXPRESSION_CHANNELS } from '../format/constants.js';
+import type { SparseMorphTargetDefinition } from '../format/types.js';
 import { computeNeckLockMask } from '../head-archetypes/HeadArchetypeController.js';
 import { upsertRelativeMorphTarget } from '../layering/SpatialMeshIndex.js';
 
@@ -25,6 +26,7 @@ export interface ProceduralExpressionLandmarks {
 export interface InstallProceduralExpressionTargetsOptions {
   overwrite?: boolean;
   channels?: readonly string[];
+  sculptedTargets?: Readonly<Record<string, SparseMorphTargetDefinition>>;
 }
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
@@ -307,6 +309,32 @@ export function installProceduralExpressionTargets(
 
   for (const channel of channels) {
     if (!overwrite && mesh.morphTargetDictionary?.[channel] !== undefined) continue;
+
+    const sculpted = options.sculptedTargets?.[channel];
+    if (sculpted && sculpted.vertexIndices.length > 0) {
+      const delta = new Float32Array(position.count * 3);
+      let moved = false;
+      const len = Math.min(sculpted.vertexIndices.length, Math.floor(sculpted.deltas.length / 3));
+      for (let k = 0; k < len; k++) {
+        const vi = sculpted.vertexIndices[k];
+        if (vi === undefined || !Number.isInteger(vi) || vi < 0 || vi >= position.count) continue;
+        const lock = neckMask[vi] ?? 1;
+        if (lock === 0) continue;
+        const dx = (sculpted.deltas[k * 3] ?? 0) * lock;
+        const dy = (sculpted.deltas[k * 3 + 1] ?? 0) * lock;
+        const dz = (sculpted.deltas[k * 3 + 2] ?? 0) * lock;
+        if (dx * dx + dy * dy + dz * dz < 1e-14) continue;
+        delta[vi * 3] = dx;
+        delta[vi * 3 + 1] = dy;
+        delta[vi * 3 + 2] = dz;
+        moved = true;
+      }
+      if (moved) {
+        upsertRelativeMorphTarget(mesh, channel, delta, 0);
+        installed.push(channel);
+      }
+      continue;
+    }
 
     const delta = new Float32Array(position.count * 3);
     let moved = false;

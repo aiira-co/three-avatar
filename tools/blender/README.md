@@ -40,7 +40,7 @@ Open `/tmp/head-manga-work.blend` in Blender, switch to **Sculpt Mode** with **X
 - All **59 shape keys** (`Basis` + `HeadArchetype_*` head styles, 30 ARKit facial expressions, and `ProceduralFace_*` ear/eye-socket/face controls) set to their exact runtime slider ranges (`0..1` or `-1..1`).
 - Exact sheared-ellipsoid **ReferenceEyes** (`RefEye_Left` / `RefEye_Right`) and selection vertex groups (`feature.eyes`, `feature.ears`, `feature.mouth`, `seam.neck_locked`) so eyelid/socket clearance is visible while sculpting.
 
-To export sculpted `HeadArchetype_*` JSON deltas and an optional baked GLB (with `ReferenceEyes`, cameras, and lights automatically excluded):
+To export sculpted `HeadArchetype_*` JSON deltas, optional sculpted expression channels, and an optional baked GLB (with `ReferenceEyes`, cameras, and lights automatically excluded):
 
 ```bash
 /Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python-exit-code 1 \
@@ -48,5 +48,6 @@ To export sculpted `HeadArchetype_*` JSON deltas and an optional baked GLB (with
   --mode export --slug female \
   --input /Users/primus-tech_01/Interverse/interverse-engine/art/avatar-prototype/studio-female-blendshapes.blend \
   --head-json-out /Users/primus-tech_01/Interverse/Framework/three-avatar/examples/head-archetypes/head-archetypes-female.json \
+  --expression-channels jawOpen,mouthFunnel,mouthPucker \
   --glb-out /tmp/studio-female-sculpted.glb
 ```

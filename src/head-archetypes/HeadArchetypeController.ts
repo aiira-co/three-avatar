@@ -9,6 +9,7 @@ import type {
   HeadArchetypePack,
   HeadArchetypeRegionId,
   HeadLandmarkSet,
+  SparseMorphTargetDefinition,
 } from '../format/types.js';
 import { setMorphTargetInfluence, upsertRelativeMorphTarget } from '../layering/SpatialMeshIndex.js';
 import type { AvatarInstance } from '../runtime/AvatarInstance.js';
@@ -371,6 +372,33 @@ function parseRegionWeights(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+function parseSparseMorphEntry(
+  rawIndices: unknown,
+  rawDeltas: unknown,
+  vertexCount: number,
+  path: string,
+): SparseMorphTargetDefinition {
+  if (!Array.isArray(rawIndices) || !Array.isArray(rawDeltas)) {
+    throw new Error(`${path}: vertexIndices and deltas must both be arrays`);
+  }
+  if (rawDeltas.length !== rawIndices.length * 3) {
+    throw new Error(`${path}: deltas length must equal vertexIndices.length * 3`);
+  }
+  const vertexIndices = rawIndices.map((v, i) => {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= vertexCount) {
+      throw new Error(`${path}.vertexIndices[${i}]: index out of range`);
+    }
+    return v;
+  });
+  const deltas = rawDeltas.map((v, i) => {
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      throw new Error(`${path}.deltas[${i}]: expected finite number`);
+    }
+    return v;
+  });
+  return { vertexIndices, deltas };
+}
+
 /**
  * Validates and hydrates a Blender-exported `HeadArchetypePack` JSON object, expanding shared
  * top-level `regionWeights` onto each `HeadArchetypeDefinition` when omitted per item.
@@ -411,28 +439,9 @@ export function parseHeadArchetypePack(raw: unknown): HeadArchetypePack {
     if (typeof label !== 'string' || label.trim() === '') throw new Error(`${path}.label: expected a non-empty string`);
 
     const targetName = typeof entry['targetName'] === 'string' && entry['targetName'] ? entry['targetName'] : undefined;
-    let vertexIndices: number[] | undefined;
-    let deltas: number[] | undefined;
-
+    let sparse: SparseMorphTargetDefinition | undefined;
     if (entry['vertexIndices'] !== undefined || entry['deltas'] !== undefined) {
-      if (!Array.isArray(entry['vertexIndices']) || !Array.isArray(entry['deltas'])) {
-        throw new Error(`${path}: vertexIndices and deltas must both be arrays`);
-      }
-      if (entry['deltas'].length !== entry['vertexIndices'].length * 3) {
-        throw new Error(`${path}: deltas length must equal vertexIndices.length * 3`);
-      }
-      vertexIndices = entry['vertexIndices'].map((v, i) => {
-        if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= vertexCount) {
-          throw new Error(`${path}.vertexIndices[${i}]: index out of range`);
-        }
-        return v;
-      });
-      deltas = entry['deltas'].map((v, i) => {
-        if (typeof v !== 'number' || !Number.isFinite(v)) {
-          throw new Error(`${path}.deltas[${i}]: expected finite number`);
-        }
-        return v;
-      });
+      sparse = parseSparseMorphEntry(entry['vertexIndices'], entry['deltas'], vertexCount, path);
     }
 
     let landmarkDeltas: HeadLandmarkSet | undefined;
@@ -454,11 +463,32 @@ export function parseHeadArchetypePack(raw: unknown): HeadArchetypePack {
       id,
       label,
       ...(targetName ? { targetName } : {}),
-      ...(vertexIndices && deltas ? { vertexIndices, deltas } : {}),
+      ...(sparse ? { vertexIndices: sparse.vertexIndices, deltas: sparse.deltas } : {}),
       ...(landmarkDeltas ? { landmarkDeltas } : {}),
       ...(resolvedRegions ? { regionWeights: resolvedRegions } : {}),
     };
   });
+
+  let expressionTargets: Record<string, SparseMorphTargetDefinition> | undefined;
+  if (raw['expressionTargets'] !== undefined) {
+    if (!isRecord(raw['expressionTargets'])) {
+      throw new Error('HeadArchetypePack.expressionTargets: expected an object');
+    }
+    expressionTargets = {};
+    for (const [channel, entry] of Object.entries(raw['expressionTargets'])) {
+      if (!channel || channel.trim() === '') {
+        throw new Error('HeadArchetypePack.expressionTargets: expected non-empty channel name');
+      }
+      const path = `HeadArchetypePack.expressionTargets.${channel}`;
+      if (!isRecord(entry)) throw new Error(`${path}: expected an object`);
+      expressionTargets[channel] = parseSparseMorphEntry(
+        entry['vertexIndices'],
+        entry['deltas'],
+        vertexCount,
+        path,
+      );
+    }
+  }
 
   return {
     version: 1,
@@ -468,5 +498,6 @@ export function parseHeadArchetypePack(raw: unknown): HeadArchetypePack {
     ...(blendHeight !== undefined ? { blendHeight } : {}),
     ...(sharedRegions ? { regionWeights: sharedRegions } : {}),
     archetypes,
+    ...(expressionTargets && Object.keys(expressionTargets).length > 0 ? { expressionTargets } : {}),
   };
 }

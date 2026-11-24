@@ -270,6 +270,14 @@ test('parseHeadArchetypePack validates real Blender female and male packs and ap
     assert.equal(pack.slug, spec.slug);
     assert.equal(pack.vertexCount, spec.vertexCount);
     assert.equal(pack.archetypes.length, expectedIds.length);
+    assert.ok(pack.expressionTargets, `${spec.slug} missing expressionTargets`);
+    for (const ch of ['jawOpen', 'mouthFunnel', 'mouthPucker']) {
+      const expr = pack.expressionTargets[ch];
+      assert.ok(expr, `${spec.slug} missing sculpted expressionTarget "${ch}"`);
+      assert.ok(expr.vertexIndices.length > 500, `${spec.slug}.${ch} sparse verts=${expr.vertexIndices.length}`);
+      assert.equal(expr.deltas.length, expr.vertexIndices.length * 3);
+      for (const d of expr.deltas) assert.ok(Number.isFinite(d));
+    }
 
     const movedHeadVertices = new Set();
     for (const id of expectedIds) {
@@ -339,4 +347,43 @@ test('parseHeadArchetypePack validates real Blender female and male packs and ap
     }
     assert.ok(nonZeroHead > 500, `Expected displaced head vertices for ${spec.slug}, got ${nonZeroHead}`);
   }
+
+  // Negative validation checks for malformed expressionTargets.
+  assert.throws(
+    () => parseHeadArchetypePack({
+      version: 1,
+      slug: 'female',
+      vertexCount: 4,
+      neckSeamY: 0.785,
+      archetypes: [],
+      expressionTargets: 'bad',
+    }),
+    /expressionTargets: expected an object/,
+  );
+  assert.throws(
+    () => parseHeadArchetypePack({
+      version: 1,
+      slug: 'female',
+      vertexCount: 4,
+      neckSeamY: 0.785,
+      archetypes: [],
+      expressionTargets: {
+        jawOpen: { vertexIndices: [0, 99], deltas: [0, 0, 0, 0, 0, 0] },
+      },
+    }),
+    /vertexIndices\[1\]: index out of range/,
+  );
+  assert.throws(
+    () => parseHeadArchetypePack({
+      version: 1,
+      slug: 'female',
+      vertexCount: 4,
+      neckSeamY: 0.785,
+      archetypes: [],
+      expressionTargets: {
+        jawOpen: { vertexIndices: [2], deltas: [0, 0] },
+      },
+    }),
+    /deltas length must equal vertexIndices\.length \* 3/,
+  );
 });

@@ -411,3 +411,46 @@ test('layering metadata round-trips cleanly through AvatarSerializer', async () 
   });
   assert.deepEqual(normalizeLayeringState({ tuckTop: 'auto', tuckCuffs: 'bogus' }), {});
 });
+
+test('solveGarmentLayers preserves unnamed GLTF morph targets and morph normal parity', async () => {
+  const trousersBundle = createCylinderMesh({
+    name: 'Trousers',
+    radius: 0.112,
+    yMin: 0.2,
+    yMax: 1.0,
+    morphTargetNames: ['TuckIntoBoots'],
+  });
+  const posTargets = trousersBundle.mesh.geometry.morphAttributes.position;
+  // Simulate GLTFLoader output: unnamed morph attribute + matching normal target + dictionary entry.
+  posTargets[0].name = '';
+  const normalDelta = new Float32Array(posTargets[0].array.length);
+  const normalAttr = new Float32BufferAttribute(normalDelta, 3);
+  trousersBundle.mesh.geometry.morphAttributes.normal = [normalAttr];
+  delete trousersBundle.mesh.geometry.userData.targetNames;
+  trousersBundle.mesh.morphTargetDictionary = { TuckIntoBoots: 0 };
+  trousersBundle.mesh.morphTargetInfluences = [0];
+
+  const runtime = setupLayerTestRuntime({
+    'test:asset/body': createCylinderMesh({ name: 'AvatarBody', radius: 0.08, yMin: 0.2, yMax: 1.4 }),
+    'test:asset/shirt': createCylinderMesh({ name: 'Shirt', radius: 0.115, yMin: 0.9, yMax: 1.3 }),
+    'test:asset/jacket': createCylinderMesh({ name: 'Jacket', radius: 0.125, yMin: 0.9, yMax: 1.3 }),
+    'test:asset/trousers': trousersBundle,
+    'test:asset/boots': createCylinderMesh({ name: 'Boots', radius: 0.12, yMin: 0.2, yMax: 0.45 }),
+  });
+
+  const avatar = await runtime.create({ family: { id: 'test:family/layered', version: '1.0.0' } });
+  const trousers = await avatar.equipment.equip({ id: 'test:item/trousers', version: '1.0.0' });
+  await avatar.equipment.equip({ id: 'test:item/boots', version: '1.0.0' });
+
+  solveGarmentLayers(avatar);
+  const mesh = trousers.root.getObjectByName('Trousers');
+  assert.equal(mesh.morphTargetDictionary.TuckIntoBoots, 0);
+  assert.equal(mesh.morphTargetInfluences[0], 1);
+  assert.equal(
+    mesh.geometry.morphAttributes.normal.length,
+    mesh.geometry.morphAttributes.position.length,
+  );
+
+  solveGarmentLayers(avatar, { tuckCuffs: 'over' });
+  assert.equal(mesh.morphTargetInfluences[mesh.morphTargetDictionary.TuckIntoBoots], 0);
+});
