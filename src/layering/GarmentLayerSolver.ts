@@ -33,6 +33,8 @@ const MAX_OUTER_INFLATE = 0.018;
 const LAYER_SEARCH_RADIUS = 0.03;
 const COVERAGE_INSIDE = 0.02;
 const COVERAGE_REACH = 0.025;
+const INNER_COVERAGE_INSIDE = 0.006;
+const INNER_COVERAGE_REACH = 0.022;
 const COVERAGE_SAME_FACING = 0.25;
 
 const LAYER_COMPRESS_TARGET = 'layer.compress';
@@ -242,8 +244,9 @@ function cleanCoverageHoles(
   const adjacency = weldedAdjacency(mesh);
   const { weld, offsets, neighbours } = adjacency;
   let state = new Float32Array(position.count);
+  state.fill(1);
   for (let i = 0; i < position.count; i++) {
-    if ((covered[i] ?? 0) > 0) state[weld[i] ?? i] = 1;
+    if ((covered[i] ?? 0) <= 0.5) state[weld[i] ?? i] = 0;
   }
   for (let pass = 0; pass < 2; pass++) {
     const next = state.slice();
@@ -270,10 +273,47 @@ function cleanCoverageHoles(
   }
 }
 
+/**
+ * Erodes covered vertices by 1 ring along the uncovered boundary so inner garments
+ * (e.g. socks inside shoe collars) always keep a continuous rim tucked behind outer cloth.
+ */
+function erodeCoverageBoundary(
+  mesh: SkinnedMesh,
+  covered: Float32Array,
+  protectedMask?: Uint8Array,
+): void {
+  const position = mesh.geometry.getAttribute('position');
+  const index = mesh.geometry.index;
+  if (!position || !index) return;
+  const { weld, offsets, neighbours } = weldedAdjacency(mesh);
+  const state = new Float32Array(position.count);
+  state.fill(1);
+  for (let i = 0; i < position.count; i++) {
+    if ((covered[i] ?? 0) <= 0.5) state[weld[i] ?? i] = 0;
+  }
+  const next = state.slice();
+  for (let v = 0; v < position.count; v++) {
+    if (weld[v] !== v || (state[v] ?? 0) === 0) continue;
+    const start = offsets[v] ?? 0;
+    const end = offsets[v + 1] ?? 0;
+    for (let k = start; k < end; k++) {
+      if ((state[neighbours[k] ?? 0] ?? 0) === 0) {
+        next[v] = 0;
+        break;
+      }
+    }
+  }
+  for (let i = 0; i < position.count; i++) {
+    const w = weld[i] ?? i;
+    covered[i] = (next[w] ?? 0) > 0 && !protectedMask?.[i] ? 1 : 0;
+  }
+}
+
 function markCoveredVertices(
   target: SkinnedMesh,
   outerIndex: SpatialMeshIndex | undefined,
   protectedMask?: Uint8Array,
+  erodeBoundary = false,
 ): number {
   const attr = ensureCoverageAttribute(target);
   const covered = attr.array as Float32Array;
@@ -289,7 +329,9 @@ function markCoveredVertices(
   const p = new Vector3();
   const n = new Vector3();
   const origin = new Vector3();
-  const probeLength = COVERAGE_INSIDE + COVERAGE_REACH;
+  const inside = erodeBoundary ? INNER_COVERAGE_INSIDE : COVERAGE_INSIDE;
+  const reach = erodeBoundary ? INNER_COVERAGE_REACH : COVERAGE_REACH;
+  const probeLength = inside + reach;
 
   for (let i = 0; i < count; i++) {
     if (protectedMask?.[i]) continue;
@@ -297,13 +339,17 @@ function markCoveredVertices(
     n.set(normals[i * 3] ?? 0, normals[i * 3 + 1] ?? 1, normals[i * 3 + 2] ?? 0);
     if (n.lengthSq() < 1e-12) continue;
     n.normalize();
-    origin.copy(p).addScaledVector(n, -COVERAGE_INSIDE);
+    origin.copy(p).addScaledVector(n, -inside);
     if (outerIndex.rayHitsFrontFacing(origin, n, probeLength, COVERAGE_SAME_FACING)) {
       covered[i] = 1;
     }
   }
 
-  cleanCoverageHoles(target, covered, protectedMask);
+  if (erodeBoundary) {
+    erodeCoverageBoundary(target, covered, protectedMask);
+  } else {
+    cleanCoverageHoles(target, covered, protectedMask);
+  }
   attr.needsUpdate = true;
 
   let coveredCount = 0;
@@ -354,7 +400,7 @@ export function computeLayerCoverage(
       : undefined;
     let totalCovered = 0;
     for (const mesh of entry.meshes) {
-      totalCovered += markCoveredVertices(mesh, higherIndex);
+      totalCovered += markCoveredVertices(mesh, higherIndex, undefined, true);
     }
     garmentCoveredVertices[entry.item.instanceId] = totalCovered;
   }

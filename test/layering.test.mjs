@@ -454,3 +454,69 @@ test('solveGarmentLayers preserves unnamed GLTF morph targets and morph normal p
   solveGarmentLayers(avatar, { tuckCuffs: 'over' });
   assert.equal(mesh.morphTargetInfluences[mesh.morphTargetDictionary.TuckIntoBoots], 0);
 });
+
+test('computeLayerCoverage erodes inner garment coverage by 1 ring at the outer rim', async () => {
+  const customRegistry = new AvatarAssetRegistry();
+  const assets = {
+    'test:asset/body': createCylinderMesh({ name: 'AvatarBody', radius: 0.08, yMin: 0.1, yMax: 0.8, heightSegments: 12 }),
+    'test:asset/socks': createCylinderMesh({ name: 'Socks', radius: 0.09, yMin: 0.2, yMax: 0.7, heightSegments: 10 }),
+    'test:asset/boots': createCylinderMesh({ name: 'Boots', radius: 0.11, yMin: 0.2, yMax: 0.45, heightSegments: 6 }),
+  };
+  customRegistry.install({
+    id: 'test:pack/socks-erosion',
+    version: '1.0.0',
+    rigs: [MIXAMO_HUMANOID_RIG_V1],
+    assets: Object.keys(assets).map((id) => ({
+      id,
+      version: '1.0.0',
+      uri: `mem://${id}`,
+      kind: id.includes('body') ? 'body' : 'wearable',
+    })),
+    families: [{
+      id: 'test:family/layered',
+      version: '1.0.0',
+      rig: { id: MIXAMO_HUMANOID_RIG_V1.id, version: MIXAMO_HUMANOID_RIG_V1.version },
+      body: {
+        asset: { id: 'test:asset/body', version: '1.0.0' },
+        meshNode: 'AvatarBody',
+        regions: [{ id: 'torso.upper', indexOffset: 0, indexCount: assets['test:asset/body'].indexCount }],
+      },
+    }],
+    items: [
+      {
+        id: 'test:item/socks',
+        version: '1.0.0',
+        kind: 'wearable',
+        compatibility: { families: [{ id: 'test:family/layered', version: '1.0.0' }] },
+        render: { type: 'skinned', asset: { id: 'test:asset/socks', version: '1.0.0' } },
+        occupies: ['feet.socks'],
+      },
+      {
+        id: 'test:item/boots',
+        version: '1.0.0',
+        kind: 'wearable',
+        compatibility: { families: [{ id: 'test:family/layered', version: '1.0.0' }] },
+        render: { type: 'skinned', asset: { id: 'test:asset/boots', version: '1.0.0' } },
+        occupies: [STANDARD_EQUIPMENT_CHANNELS.Feet],
+      },
+    ],
+  });
+  const runtime = new AvatarRuntime(customRegistry, { async load(ref) { return { root: assets[ref.id].root }; } });
+  const avatar = await runtime.create({ family: { id: 'test:family/layered', version: '1.0.0' } });
+  const socks = await avatar.equipment.equip({ id: 'test:item/socks', version: '1.0.0' });
+  await avatar.equipment.equip({ id: 'test:item/boots', version: '1.0.0' });
+
+  computeLayerCoverage(avatar);
+  const socksMesh = socks.root.getObjectByName('Socks');
+  const pos = socksMesh.geometry.getAttribute('position');
+  const cov = socksMesh.geometry.getAttribute(LAYER_COVERAGE_ATTRIBUTE);
+  let coveredLow = 0;
+  let coveredAtCollar = 0;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y <= 0.35 && cov.getX(i) > 0.5) coveredLow++;
+    if (y >= 0.43 && cov.getX(i) > 0.5) coveredAtCollar++;
+  }
+  assert.ok(coveredLow > 0, 'deep interior sock vertices inside boot are marked covered');
+  assert.equal(coveredAtCollar, 0, 'sock ring right at/above boot collar is eroded uncovered to prevent collar gaps');
+});
