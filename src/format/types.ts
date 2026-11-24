@@ -269,6 +269,25 @@ export interface ExpressionReactionEnvelope {
   release: number;
 }
 
+export type MoodBubbleStyle = 'anime' | 'bubble' | 'card' | 'icon';
+export type MoodBubbleMode = 'always' | 'reactions';
+export type MoodBubblePlacement = 'center' | 'temple';
+export type MoodBubbleSymbolId =
+  | 'calm'
+  | 'smile_note'
+  | 'sparkle'
+  | 'starburst'
+  | 'hearts'
+  | 'anger_vein'
+  | 'storm_swirl'
+  | 'exclamation'
+  | 'raindrop'
+  | 'tears_cloud'
+  | 'star_glint'
+  | 'question'
+  | 'blush_petals'
+  | 'focus_spark';
+
 export interface ExpressionPresetDefinition {
   id: string;
   label: string;
@@ -278,11 +297,25 @@ export interface ExpressionPresetDefinition {
   eyeResponse?: ExpressionEyeResponse;
   overlays?: readonly ExpressionOverlayCue[];
   reactionEnvelope?: ExpressionReactionEnvelope;
+  accentColor?: string;
+  bubbleSymbol?: MoodBubbleSymbolId;
 }
 
 export interface AvatarMoodState {
   mood: string;
   intensity?: number;
+}
+
+export interface AvatarMoodBubbleState {
+  enabled: boolean;
+  mode: MoodBubbleMode;
+  style: MoodBubbleStyle;
+  placement: MoodBubblePlacement;
+  scale: number;
+  heightOffset: number;
+  showLabel: boolean;
+  showOnNeutral: boolean;
+  customIcons?: Record<string, string>;
 }
 
 export interface AvatarItemDefinition extends VersionedId {

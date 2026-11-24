@@ -45,6 +45,11 @@ All 14 presets live in `BUILTIN_EXPRESSION_PRESETS` and map cleanly onto canonic
 ### C. Interverse Games (Gameplay & Multiplayer)
 - `ExpressionController` works identically inside `interverse-engine` games for NPC dialogue, combat hit/angry states, victory emotes, and multiplayer chat bubbles (replicating only `{ moodId, intensity }`, `< 16 bytes`).
 
+### D. Overhead Mood Cards & Bubbles (`AvatarStateV1.metadata.moodBubble`)
+- **Preset styling**: Every built-in preset includes an `accentColor` hex string and `bubbleSymbol` (`MoodBubbleSymbolId`) so overhead signs, thought clouds, and frosted cards stay aligned with the active facial mood.
+- **Controller outputs**: `ExpressionFrameOutput` exposes `dominantMood`, `dominantMoodWeight`, and `reactionWeight` so host renderers (WebGL sprites or WebGPU `SpriteNodeMaterial` billboards) can smoothly pop in, idle-bob, and clear overhead cues.
+- **Metadata persistence**: `MOOD_BUBBLE_METADATA_KEY` (`'moodBubble'`) stores `AvatarMoodBubbleState` (`enabled`, `mode: 'always' | 'reactions'`, `style: 'anime' | 'bubble' | 'card' | 'icon'`, `placement: 'center' | 'temple'`, `scale`, `heightOffset`, `showLabel`, `showOnNeutral`, optional per-mood `customIcons`) via `normalizeMoodBubbleState`, `readMoodBubbleState`, and `writeMoodBubbleState`.
+
 ---
 
 ## 3. Procedural Landmark Targets + Seamless Blender Upgrade Path

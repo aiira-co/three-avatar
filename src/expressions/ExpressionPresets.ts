@@ -9,6 +9,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     headTiltDeg: [0, 0, 0],
     eyeResponse: { gaze: [0, 0], pupilScale: 1, blinkRateMultiplier: 1, eyeSymbol: 'classic' },
     reactionEnvelope: { attack: 0.12, hold: 0.5, release: 0.25 },
+    accentColor: '#94a3b8',
+    bubbleSymbol: 'calm',
   },
   {
     id: 'smile',
@@ -27,6 +29,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     headTiltDeg: [-2, 0, 2],
     eyeResponse: { pupilScale: 1.04, blinkRateMultiplier: 1.0 },
     reactionEnvelope: { attack: 0.15, hold: 1.1, release: 0.35 },
+    accentColor: '#f5b83d',
+    bubbleSymbol: 'smile_note',
   },
   {
     id: 'happy',
@@ -50,6 +54,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     eyeResponse: { pupilScale: 1.08, blinkRateMultiplier: 1.1 },
     overlays: ['sparkle'],
     reactionEnvelope: { attack: 0.14, hold: 1.3, release: 0.4 },
+    accentColor: '#fbbf24',
+    bubbleSymbol: 'sparkle',
   },
   {
     id: 'laugh',
@@ -73,6 +79,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     eyeResponse: { pupilScale: 1.06, blinkRateMultiplier: 1.3 },
     overlays: ['sparkle'],
     reactionEnvelope: { attack: 0.12, hold: 1.5, release: 0.45 },
+    accentColor: '#fb923c',
+    bubbleSymbol: 'starburst',
   },
   {
     id: 'angry',
@@ -96,6 +104,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     eyeResponse: { pupilScale: 0.86, blinkRateMultiplier: 0.65 },
     overlays: ['anger_vein'],
     reactionEnvelope: { attack: 0.12, hold: 1.4, release: 0.4 },
+    accentColor: '#ef4444',
+    bubbleSymbol: 'anger_vein',
   },
   {
     id: 'frustrated',
@@ -119,6 +129,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     eyeResponse: { gaze: [-0.09, 0.04], pupilScale: 0.90, blinkRateMultiplier: 1.15 },
     overlays: ['sweat_drop'],
     reactionEnvelope: { attack: 0.16, hold: 1.4, release: 0.45 },
+    accentColor: '#8b5cf6',
+    bubbleSymbol: 'storm_swirl',
   },
   {
     id: 'surprised',
@@ -136,6 +148,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     headTiltDeg: [-4, 0, 0],
     eyeResponse: { pupilScale: 0.78, blinkRateMultiplier: 0.5 },
     reactionEnvelope: { attack: 0.09, hold: 1.2, release: 0.4 },
+    accentColor: '#facc15',
+    bubbleSymbol: 'exclamation',
   },
   {
     id: 'sad',
@@ -152,6 +166,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     headTiltDeg: [7, 0, -4],
     eyeResponse: { gaze: [0, 0.10], pupilScale: 1.04, blinkRateMultiplier: 0.85 },
     reactionEnvelope: { attack: 0.24, hold: 1.5, release: 0.5 },
+    accentColor: '#60a5fa',
+    bubbleSymbol: 'raindrop',
   },
   {
     id: 'cry',
@@ -174,6 +190,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     eyeResponse: { gaze: [0, 0.12], pupilScale: 1.12, blinkRateMultiplier: 1.5 },
     overlays: ['tears'],
     reactionEnvelope: { attack: 0.2, hold: 1.6, release: 0.55 },
+    accentColor: '#38bdf8',
+    bubbleSymbol: 'tears_cloud',
   },
   {
     id: 'bold',
@@ -192,6 +210,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     eyeResponse: { gaze: [0.06, -0.03], pupilScale: 0.95, blinkRateMultiplier: 0.85 },
     overlays: ['sparkle'],
     reactionEnvelope: { attack: 0.15, hold: 1.35, release: 0.4 },
+    accentColor: '#f97316',
+    bubbleSymbol: 'star_glint',
   },
   {
     id: 'skeptical',
@@ -211,6 +231,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     headTiltDeg: [-2, 6, -6],
     eyeResponse: { gaze: [0.16, -0.02], pupilScale: 0.96, blinkRateMultiplier: 0.8 },
     reactionEnvelope: { attack: 0.16, hold: 1.3, release: 0.38 },
+    accentColor: '#14b8a6',
+    bubbleSymbol: 'question',
   },
   {
     id: 'shy',
@@ -229,6 +251,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     eyeResponse: { gaze: [-0.15, 0.08], pupilScale: 1.08, blinkRateMultiplier: 1.25 },
     overlays: ['blush'],
     reactionEnvelope: { attack: 0.2, hold: 1.35, release: 0.45 },
+    accentColor: '#f472b6',
+    bubbleSymbol: 'blush_petals',
   },
   {
     id: 'focused',
@@ -246,6 +270,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     headTiltDeg: [3, 0, 0],
     eyeResponse: { gaze: [0, 0], pupilScale: 0.88, blinkRateMultiplier: 0.6 },
     reactionEnvelope: { attack: 0.16, hold: 1.2, release: 0.35 },
+    accentColor: '#22d3ee',
+    bubbleSymbol: 'focus_spark',
   },
   {
     id: 'love',
@@ -265,6 +291,8 @@ export const BUILTIN_EXPRESSION_PRESETS: readonly ExpressionPresetDefinition[] =
     eyeResponse: { pupilScale: 1.18, blinkRateMultiplier: 1.05, eyeSymbol: 'heart' },
     overlays: ['blush', 'heart_eyes'],
     reactionEnvelope: { attack: 0.15, hold: 1.5, release: 0.45 },
+    accentColor: '#ec4899',
+    bubbleSymbol: 'hearts',
   },
 ];
 

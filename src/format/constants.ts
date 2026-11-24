@@ -139,6 +139,11 @@ export const LAYERING_METADATA_KEY = 'layering' as const;
 export const POSE_OFFSETS_METADATA_KEY = 'poseOffsets' as const;
 export const HEAD_ARCHETYPES_METADATA_KEY = 'headArchetypes' as const;
 export const EXPRESSION_MOOD_METADATA_KEY = 'mood' as const;
+export const MOOD_BUBBLE_METADATA_KEY = 'moodBubble' as const;
+
+export const MOOD_BUBBLE_STYLES = ['anime', 'bubble', 'card', 'icon'] as const;
+export const MOOD_BUBBLE_MODES = ['always', 'reactions'] as const;
+export const MOOD_BUBBLE_PLACEMENTS = ['center', 'temple'] as const;
 
 export const HEAD_ARCHETYPE_REGIONS = [
   'cranium',

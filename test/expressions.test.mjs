@@ -19,13 +19,22 @@ import {
   AvatarSerializer,
   BUILTIN_EXPRESSION_PRESETS,
   BUILTIN_EXPRESSION_PRESET_MAP,
+  DEFAULT_MOOD_BUBBLE_STATE,
   EXPRESSION_MOOD_IDS,
   EXPRESSION_MOOD_METADATA_KEY,
   ExpressionController,
   MIXAMO_HUMANOID_RIG_V1,
+  MOOD_BUBBLE_METADATA_KEY,
+  MOOD_BUBBLE_MODES,
+  MOOD_BUBBLE_PLACEMENTS,
+  MOOD_BUBBLE_STYLES,
   installProceduralExpressionTargets,
+  isDefaultMoodBubbleState,
+  normalizeMoodBubbleState,
   normalizeMoodState,
+  readMoodBubbleState,
   readMoodState,
+  writeMoodBubbleState,
   writeMoodState,
 } from '../dist/index.js';
 import { ExpressionController as SubpathExpressionController } from '../dist/expressions/index.js';
@@ -90,6 +99,8 @@ test('expression presets cover all 14 mood ids with valid ARKit core channels', 
   for (const id of EXPRESSION_MOOD_IDS) {
     const preset = BUILTIN_EXPRESSION_PRESET_MAP.get(id);
     assert.ok(preset, `Missing builtin expression preset for "${id}"`);
+    assert.match(preset.accentColor ?? '', /^#[0-9a-f]{6}$/i, `Missing valid accentColor for "${id}"`);
+    assert.ok(preset.bubbleSymbol, `Missing bubbleSymbol for "${id}"`);
     for (const [channel, weight] of Object.entries(preset.channels)) {
       assert.ok(allowedChannels.has(channel), `Unknown channel "${channel}" in preset "${id}"`);
       assert.ok(weight >= 0 && weight <= 1, `Weight out of [0,1] for ${id}.${channel}: ${weight}`);
@@ -112,6 +123,9 @@ test('ExpressionController blends moods, drives target meshes, handles reactions
   let steady = early;
   for (let i = 0; i < 12; i++) steady = controller.update(0.05);
   assert.ok(Math.abs(steady.channels['mouthSmileLeft'] - 0.68) < 0.01);
+  assert.equal(steady.dominantMood, 'smile');
+  assert.ok(steady.dominantMoodWeight > 0.99);
+  assert.equal(steady.reactionWeight, 0);
   const smileIdx = mesh.morphTargetDictionary['mouthSmileLeft'];
   assert.ok(smileIdx !== undefined);
   assert.ok(Math.abs(mesh.morphTargetInfluences[smileIdx] - 0.68) < 0.01);
@@ -120,6 +134,8 @@ test('ExpressionController blends moods, drives target meshes, handles reactions
   controller.triggerReaction('surprised', { intensity: 1, attack: 0.1, hold: 0.2, release: 0.2 });
   const peak = controller.update(0.15); // midway into hold (reactionWeight = 1)
   assert.equal(peak.activeReaction, 'surprised');
+  assert.equal(peak.reactionWeight, 1);
+  assert.equal(peak.dominantMood, 'smile');
   assert.ok(peak.pupilScale < 1, `Expected constricted pupil on surprised, got ${peak.pupilScale}`);
   assert.ok(Math.abs(peak.pupilScale - 0.78) < 1e-4);
   assert.ok(Math.abs(peak.channels['jawOpen'] - 0.62) < 1e-4);
@@ -127,17 +143,22 @@ test('ExpressionController blends moods, drives target meshes, handles reactions
   // After total reaction duration (0.1 + 0.2 + 0.2 = 0.5s), returns to base 'smile'
   const recovered = controller.update(0.45); // elapsed = 0.60 >= 0.50
   assert.equal(recovered.activeReaction, undefined);
+  assert.equal(recovered.reactionWeight, 0);
   assert.ok(Math.abs(recovered.channels['mouthSmileLeft'] - 0.68) < 0.01);
   assert.equal(recovered.channels['jawOpen'], undefined);
 
   // 3. Mood mix & clearMood
-  controller.setMoodMix({ angry: 0.5, frustrated: 0.5 }, 0);
+  controller.setMoodMix({ angry: 0.5, frustrated: 0.8 }, 0);
   const mixed = controller.update(0);
+  assert.equal(mixed.dominantMood, 'frustrated');
+  assert.ok(Math.abs(mixed.dominantMoodWeight - 0.8) < 1e-6);
   assert.ok(mixed.channels['browDownLeft'] > 0);
   assert.ok(mixed.channels['noseSneerLeft'] > 0);
 
   controller.clearMood(0);
   const cleared = controller.update(0);
+  assert.equal(cleared.dominantMood, 'neutral');
+  assert.equal(cleared.dominantMoodWeight, 0);
   assert.deepEqual(cleared.channels, {});
   assert.ok(Math.abs(mesh.morphTargetInfluences[smileIdx]) < 1e-6);
 
@@ -216,6 +237,44 @@ test('mood state persists in AvatarStateV1.metadata without mutating body.morphs
   writeMoodState(restored, { mood: 'neutral' });
   assert.equal(restored.serialize().metadata?.[EXPRESSION_MOOD_METADATA_KEY], undefined);
   assert.deepEqual(readMoodState(restored), { mood: 'neutral', intensity: 1 });
+
+  // Mood bubble metadata normalization & round-trip
+  assert.deepEqual(MOOD_BUBBLE_STYLES, ['anime', 'bubble', 'card', 'icon']);
+  assert.deepEqual(MOOD_BUBBLE_MODES, ['always', 'reactions']);
+  assert.deepEqual(MOOD_BUBBLE_PLACEMENTS, ['center', 'temple']);
+  assert.ok(isDefaultMoodBubbleState(DEFAULT_MOOD_BUBBLE_STATE));
+
+  const clamped = normalizeMoodBubbleState({
+    enabled: false,
+    mode: 'reactions',
+    style: 'anime',
+    placement: 'temple',
+    scale: 9,
+    heightOffset: -5,
+    showLabel: true,
+    showOnNeutral: true,
+    customIcons: { angry: 'https://example.com/angry.png', bad: 'data:text/plain;base64,Zm9v' },
+  });
+  assert.deepEqual(clamped, {
+    enabled: false,
+    mode: 'reactions',
+    style: 'anime',
+    placement: 'temple',
+    scale: 1.6,
+    heightOffset: -0.05,
+    showLabel: true,
+    showOnNeutral: true,
+    customIcons: { angry: 'https://example.com/angry.png' },
+  });
+
+  writeMoodBubbleState(restored, clamped);
+  const savedBubble = serializer.parse(serializer.stringify(restored.serialize()));
+  assert.deepEqual(savedBubble.metadata?.[MOOD_BUBBLE_METADATA_KEY], clamped);
+  const restoredBubble = await runtime.fromJSON(savedBubble);
+  assert.deepEqual(readMoodBubbleState(restoredBubble), clamped);
+
+  writeMoodBubbleState(restoredBubble, { ...DEFAULT_MOOD_BUBBLE_STATE });
+  assert.equal(restoredBubble.serialize().metadata?.[MOOD_BUBBLE_METADATA_KEY], undefined);
 });
 
 test('installProceduralExpressionTargets locks neck seam and skips existing Blender targets unless overwrite=true', () => {

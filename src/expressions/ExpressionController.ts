@@ -1,10 +1,20 @@
 import { Mesh } from 'three';
 import { FACE_EXPRESSION_LAYER } from '../face/AvatarFaceController.js';
-import { EXPRESSION_MOOD_METADATA_KEY } from '../format/constants.js';
+import {
+  EXPRESSION_MOOD_METADATA_KEY,
+  MOOD_BUBBLE_METADATA_KEY,
+  MOOD_BUBBLE_MODES,
+  MOOD_BUBBLE_PLACEMENTS,
+  MOOD_BUBBLE_STYLES,
+} from '../format/constants.js';
 import type {
+  AvatarMoodBubbleState,
   AvatarMoodState,
   ExpressionOverlayCue,
   ExpressionPresetDefinition,
+  MoodBubbleMode,
+  MoodBubblePlacement,
+  MoodBubbleStyle,
 } from '../format/types.js';
 import { setMorphTargetInfluence } from '../layering/SpatialMeshIndex.js';
 import type { AvatarInstance } from '../runtime/AvatarInstance.js';
@@ -18,6 +28,9 @@ export interface ExpressionFrameOutput {
   blinkRateMultiplier: number;
   eyeSymbol: 'classic' | 'heart' | 'star';
   overlays: { id: ExpressionOverlayCue; weight: number }[];
+  dominantMood: string;
+  dominantMoodWeight: number;
+  reactionWeight: number;
   activeReaction?: string;
 }
 
@@ -76,6 +89,114 @@ export function writeMoodState(
     delete next[EXPRESSION_MOOD_METADATA_KEY];
   } else {
     next[EXPRESSION_MOOD_METADATA_KEY] = normalized;
+  }
+  avatar.setMetadata(Object.keys(next).length > 0 ? next : undefined);
+  return normalized;
+}
+
+export const DEFAULT_MOOD_BUBBLE_STATE: Readonly<AvatarMoodBubbleState> = {
+  enabled: true,
+  mode: 'always',
+  style: 'bubble',
+  placement: 'center',
+  scale: 1,
+  heightOffset: 0,
+  showLabel: false,
+  showOnNeutral: false,
+};
+
+const VALID_BUBBLE_MODES = new Set<string>(MOOD_BUBBLE_MODES);
+const VALID_BUBBLE_STYLES = new Set<string>(MOOD_BUBBLE_STYLES);
+const VALID_BUBBLE_PLACEMENTS = new Set<string>(MOOD_BUBBLE_PLACEMENTS);
+const MAX_CUSTOM_ICON_LENGTH = 16_384;
+
+function normalizeCustomIcons(raw: unknown): Record<string, string> | undefined {
+  if (!isRecord(raw)) return undefined;
+  const cleaned: Record<string, string> = {};
+  for (const [key, val] of Object.entries(raw)) {
+    const moodKey = key.trim();
+    if (!moodKey || typeof val !== 'string') continue;
+    const trimmed = val.trim();
+    if (!trimmed || trimmed.length > MAX_CUSTOM_ICON_LENGTH) continue;
+    if (trimmed.startsWith('data:') && !trimmed.startsWith('data:image/')) continue;
+    cleaned[moodKey] = trimmed;
+  }
+  return Object.keys(cleaned).length > 0 ? cleaned : undefined;
+}
+
+export function normalizeMoodBubbleState(raw: unknown): AvatarMoodBubbleState {
+  if (!isRecord(raw)) {
+    return { ...DEFAULT_MOOD_BUBBLE_STATE };
+  }
+  const enabled = typeof raw['enabled'] === 'boolean' ? raw['enabled'] : DEFAULT_MOOD_BUBBLE_STATE.enabled;
+  const mode: MoodBubbleMode =
+    typeof raw['mode'] === 'string' && VALID_BUBBLE_MODES.has(raw['mode'])
+      ? (raw['mode'] as MoodBubbleMode)
+      : DEFAULT_MOOD_BUBBLE_STATE.mode;
+  const style: MoodBubbleStyle =
+    typeof raw['style'] === 'string' && VALID_BUBBLE_STYLES.has(raw['style'])
+      ? (raw['style'] as MoodBubbleStyle)
+      : DEFAULT_MOOD_BUBBLE_STATE.style;
+  const placement: MoodBubblePlacement =
+    typeof raw['placement'] === 'string' && VALID_BUBBLE_PLACEMENTS.has(raw['placement'])
+      ? (raw['placement'] as MoodBubblePlacement)
+      : DEFAULT_MOOD_BUBBLE_STATE.placement;
+  const rawScale = raw['scale'];
+  const scale =
+    typeof rawScale === 'number' && Number.isFinite(rawScale)
+      ? Math.max(0.6, Math.min(1.6, Math.round(rawScale * 100) / 100))
+      : DEFAULT_MOOD_BUBBLE_STATE.scale;
+  const rawOffset = raw['heightOffset'];
+  const heightOffset =
+    typeof rawOffset === 'number' && Number.isFinite(rawOffset)
+      ? Math.max(-0.05, Math.min(0.25, Math.round(rawOffset * 1000) / 1000))
+      : DEFAULT_MOOD_BUBBLE_STATE.heightOffset;
+  const showLabel = typeof raw['showLabel'] === 'boolean' ? raw['showLabel'] : DEFAULT_MOOD_BUBBLE_STATE.showLabel;
+  const showOnNeutral =
+    typeof raw['showOnNeutral'] === 'boolean' ? raw['showOnNeutral'] : DEFAULT_MOOD_BUBBLE_STATE.showOnNeutral;
+  const customIcons = normalizeCustomIcons(raw['customIcons']);
+  return {
+    enabled,
+    mode,
+    style,
+    placement,
+    scale,
+    heightOffset,
+    showLabel,
+    showOnNeutral,
+    ...(customIcons ? { customIcons } : {}),
+  };
+}
+
+export function isDefaultMoodBubbleState(state: AvatarMoodBubbleState): boolean {
+  return (
+    state.enabled === DEFAULT_MOOD_BUBBLE_STATE.enabled
+    && state.mode === DEFAULT_MOOD_BUBBLE_STATE.mode
+    && state.style === DEFAULT_MOOD_BUBBLE_STATE.style
+    && state.placement === DEFAULT_MOOD_BUBBLE_STATE.placement
+    && state.scale === DEFAULT_MOOD_BUBBLE_STATE.scale
+    && state.heightOffset === DEFAULT_MOOD_BUBBLE_STATE.heightOffset
+    && state.showLabel === DEFAULT_MOOD_BUBBLE_STATE.showLabel
+    && state.showOnNeutral === DEFAULT_MOOD_BUBBLE_STATE.showOnNeutral
+    && (!state.customIcons || Object.keys(state.customIcons).length === 0)
+  );
+}
+
+export function readMoodBubbleState(avatar: AvatarInstance): AvatarMoodBubbleState {
+  return normalizeMoodBubbleState(avatar.serialize().metadata?.[MOOD_BUBBLE_METADATA_KEY]);
+}
+
+export function writeMoodBubbleState(
+  avatar: AvatarInstance,
+  state: AvatarMoodBubbleState | undefined,
+): AvatarMoodBubbleState {
+  const normalized = normalizeMoodBubbleState(state);
+  const current = avatar.serialize().metadata ?? {};
+  const next: Record<string, unknown> = { ...current };
+  if (isDefaultMoodBubbleState(normalized)) {
+    delete next[MOOD_BUBBLE_METADATA_KEY];
+  } else {
+    next[MOOD_BUBBLE_METADATA_KEY] = normalized;
   }
   avatar.setMetadata(Object.keys(next).length > 0 ? next : undefined);
   return normalized;
@@ -239,12 +360,18 @@ export class ExpressionController {
     let baseBlinkMult = 1;
     let baseTotalWeight = 0;
     let baseSymbol: 'classic' | 'heart' | 'star' = 'classic';
+    let dominantMood = 'neutral';
+    let dominantMoodWeight = 0;
     const overlayWeights = new Map<ExpressionOverlayCue, number>();
 
     for (const [id, weight] of this.currentMoodWeights) {
       const preset = this.presets.get(id);
       if (!preset || weight <= 0) continue;
       baseTotalWeight += weight;
+      if (id !== 'neutral' && weight > dominantMoodWeight) {
+        dominantMood = id;
+        dominantMoodWeight = weight;
+      }
 
       for (const [ch, val] of Object.entries(preset.channels)) {
         baseChannels[ch] = clamp01((baseChannels[ch] ?? 0) + val * weight);
@@ -337,6 +464,9 @@ export class ExpressionController {
       blinkRateMultiplier: finalBlinkMult,
       eyeSymbol: finalSymbol,
       overlays: [...overlayWeights.entries()].map(([id, weight]) => ({ id, weight })),
+      dominantMood,
+      dominantMoodWeight: clamp01(dominantMoodWeight),
+      reactionWeight: reactionPreset && reactionWeight > 0 ? clamp01(reactionWeight) : 0,
       ...(reactionPreset && reactionWeight > 0 ? { activeReaction: reactionPreset.id } : {}),
     };
   }
