@@ -161,6 +161,124 @@ export type AvatarItemRenderDefinition =
       transform?: SerializableTransform;
     };
 
+export interface GarmentLayerMetadata {
+  rank?: number;
+  openFront?: boolean;
+  sleeveless?: boolean;
+  highShaft?: boolean;
+  tuckable?: boolean;
+  outerBulk?: number;
+}
+
+export type TuckTopMode = 'auto' | 'tucked' | 'untucked';
+export type TuckCuffsMode = 'auto' | 'tucked' | 'over';
+
+export interface AvatarLayeringState {
+  tuckTop?: TuckTopMode;
+  tuckCuffs?: TuckCuffsMode;
+  layerOverrides?: Record<EquipmentChannelId, number>;
+}
+
+/** Euler rotation offset in degrees `[rx, ry, rz]` applied in parent/rest frame before IK. */
+export type BonePoseOffset = readonly [number, number, number];
+
+export interface AvatarPoseOffsetState {
+  auto?: boolean;
+  symmetric?: boolean;
+  global?: Record<string, BonePoseOffset>;
+  perClip?: Record<string, Record<string, BonePoseOffset>>;
+}
+
+export type HeadArchetypeRegionId =
+  | 'cranium'
+  | 'brows_eyes'
+  | 'nose'
+  | 'cheeks'
+  | 'mouth'
+  | 'jaw_chin'
+  | 'ears';
+
+export type HeadLandmarkSet = Record<string, readonly [number, number, number]>;
+
+export interface HeadArchetypeDefinition {
+  id: string;
+  label: string;
+  targetName?: string;
+  vertexIndices?: number[];
+  deltas?: number[];
+  landmarkDeltas?: HeadLandmarkSet;
+  regionWeights?: Partial<Record<HeadArchetypeRegionId, number[]>>;
+}
+
+export interface AvatarHeadArchetypeState {
+  weights: Record<string, number>;
+  regions?: Partial<Record<HeadArchetypeRegionId, Record<string, number>>>;
+}
+
+export interface HeadArchetypePack {
+  version: 1;
+  slug: string;
+  vertexCount: number;
+  neckSeamY: number;
+  blendHeight?: number;
+  regionWeights?: Partial<Record<HeadArchetypeRegionId, number[]>>;
+  archetypes: HeadArchetypeDefinition[];
+}
+
+export type ExpressionMoodId =
+  | 'neutral'
+  | 'smile'
+  | 'happy'
+  | 'laugh'
+  | 'angry'
+  | 'frustrated'
+  | 'surprised'
+  | 'sad'
+  | 'cry'
+  | 'bold'
+  | 'skeptical'
+  | 'shy'
+  | 'focused'
+  | 'love';
+
+export type ExpressionOverlayCue =
+  | 'tears'
+  | 'blush'
+  | 'sweat_drop'
+  | 'anger_vein'
+  | 'sparkle'
+  | 'heart_eyes';
+
+export interface ExpressionEyeResponse {
+  /** `[yaw, pitch]` gaze offset in radians. */
+  gaze?: readonly [number, number];
+  pupilScale?: number;
+  blinkRateMultiplier?: number;
+  eyeSymbol?: 'classic' | 'heart' | 'star';
+}
+
+export interface ExpressionReactionEnvelope {
+  attack: number;
+  hold: number;
+  release: number;
+}
+
+export interface ExpressionPresetDefinition {
+  id: string;
+  label: string;
+  category: 'positive' | 'intense' | 'tender' | 'playful' | 'neutral';
+  channels: Record<MorphChannelId, number>;
+  headTiltDeg?: readonly [number, number, number];
+  eyeResponse?: ExpressionEyeResponse;
+  overlays?: readonly ExpressionOverlayCue[];
+  reactionEnvelope?: ExpressionReactionEnvelope;
+}
+
+export interface AvatarMoodState {
+  mood: string;
+  intensity?: number;
+}
+
 export interface AvatarItemDefinition extends VersionedId {
   name?: string;
   kind: AvatarItemKind;
@@ -173,6 +291,7 @@ export interface AvatarItemDefinition extends VersionedId {
   conflicts?: EquipmentChannelId[];
   coversBody?: BodyRegionId[];
   occludes?: OcclusionSurfaceId[];
+  layer?: GarmentLayerMetadata;
   materialChannels?: MaterialChannelDefinition[];
   morphBindings?: MorphBindingDefinition[];
   metadata?: Record<string, unknown>;

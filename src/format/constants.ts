@@ -110,8 +110,11 @@ export const STANDARD_EQUIPMENT_CHANNELS = {
   HeadBase: 'head.base',
   HeadOuter: 'head.outer',
   FaceEyes: 'face.eyes',
+  FaceMask: 'face.mask',
   FaceLeft: 'face.left',
   FaceRight: 'face.right',
+  EarLeft: 'ear.left',
+  EarRight: 'ear.right',
   Neck: 'neck',
   UpperUnder: 'upper.under',
   UpperBase: 'upper.base',
@@ -120,13 +123,82 @@ export const STANDARD_EQUIPMENT_CHANNELS = {
   LowerUnder: 'lower.under',
   LowerBase: 'lower.base',
   LowerOuter: 'lower.outer',
+  Outfit: 'outfit',
+  Hands: 'hands',
   LeftHand: 'hands.left',
   RightHand: 'hands.right',
+  Feet: 'feet',
+  FeetSocks: 'feet.socks',
   LeftFoot: 'feet.left',
   RightFoot: 'feet.right',
   Back: 'back',
   Waist: 'waist',
 } as const satisfies Record<string, EquipmentChannelId>;
+
+export const LAYERING_METADATA_KEY = 'layering' as const;
+export const POSE_OFFSETS_METADATA_KEY = 'poseOffsets' as const;
+export const HEAD_ARCHETYPES_METADATA_KEY = 'headArchetypes' as const;
+export const EXPRESSION_MOOD_METADATA_KEY = 'mood' as const;
+
+export const HEAD_ARCHETYPE_REGIONS = [
+  'cranium',
+  'brows_eyes',
+  'nose',
+  'cheeks',
+  'mouth',
+  'jaw_chin',
+  'ears',
+] as const;
+
+export const ARKIT_CORE_EXPRESSION_CHANNELS = [
+  'browInnerUp',
+  'browDownLeft',
+  'browDownRight',
+  'browOuterUpLeft',
+  'browOuterUpRight',
+  'eyeWideLeft',
+  'eyeWideRight',
+  'eyeSquintLeft',
+  'eyeSquintRight',
+  'eyeBlinkLeft',
+  'eyeBlinkRight',
+  'cheekSquintLeft',
+  'cheekSquintRight',
+  'cheekPuff',
+  'noseSneerLeft',
+  'noseSneerRight',
+  'mouthSmileLeft',
+  'mouthSmileRight',
+  'mouthFrownLeft',
+  'mouthFrownRight',
+  'mouthPressLeft',
+  'mouthPressRight',
+  'mouthPucker',
+  'mouthFunnel',
+  'mouthDimpleLeft',
+  'mouthDimpleRight',
+  'mouthShrugLower',
+  'mouthUpperUpLeft',
+  'mouthUpperUpRight',
+  'jawOpen',
+] as const;
+
+export const EXPRESSION_MOOD_IDS = [
+  'neutral',
+  'smile',
+  'happy',
+  'laugh',
+  'angry',
+  'frustrated',
+  'surprised',
+  'sad',
+  'cry',
+  'bold',
+  'skeptical',
+  'shy',
+  'focused',
+  'love',
+] as const;
 
 export const MIXAMO_HUMANOID_RIG_V1: AvatarRigDefinition = {
   id: 'interverse:rig/humanoid-mixamo',

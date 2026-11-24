@@ -23,12 +23,35 @@
     "./gltf": {
       "types": "./dist/assets/GltfAvatarAssetLoader.d.ts",
       "import": "./dist/assets/GltfAvatarAssetLoader.js"
+    },
+    "./layering": {
+      "types": "./dist/layering/index.d.ts",
+      "import": "./dist/layering/index.js"
+    },
+    "./pose": {
+      "types": "./dist/pose/index.d.ts",
+      "import": "./dist/pose/index.js"
+    },
+    "./playtest": {
+      "types": "./dist/playtest/index.d.ts",
+      "import": "./dist/playtest/index.js"
+    },
+    "./head-archetypes": {
+      "types": "./dist/head-archetypes/index.d.ts",
+      "import": "./dist/head-archetypes/index.js"
+    },
+    "./expressions": {
+      "types": "./dist/expressions/index.d.ts",
+      "import": "./dist/expressions/index.js"
     }
   },
   "files": [
     "dist",
     "examples",
+    "tools/blender",
     "docs/AUTHORING.md",
+    "docs/EXPRESSIONS.md",
+    "docs/ROADMAP.md",
     "README.md",
     "LICENSE"
   ],
@@ -54,9 +77,9 @@
     "three": ">=0.185.0"
   },
   "devDependencies": {
-    "@types/three": "^0.185.0",
+    "@types/three": "^0.187.0",
     "rimraf": "^6.1.3",
-    "three": "^0.185.0",
+    "three": "^0.187.0",
     "typescript": "^5.9.0"
   },
   "repository": {

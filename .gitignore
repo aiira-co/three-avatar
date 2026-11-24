@@ -1,3 +1,7 @@
 node_modules/
 dist/
 *.tgz
+.DS_Store
+.pnpm-store/
+__pycache__/
+*.pyc
