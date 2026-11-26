@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Euler, Quaternion } from 'three';
+import { Bone, Euler, Group, Quaternion, Skeleton } from 'three';
+import { AvatarRig } from '../dist/rig/AvatarRig.js';
+import { MIXAMO_HUMANOID_RIG_V1 } from '../dist/format/constants.js';
 import {
   ChannelMapOneEuroFilter,
+  HAND_FINGER_BONE_ALIASES,
+  HAND_FINGER_BONE_IDS,
   MocapClipRecorder,
   OneEuroFilter,
   QuaternionOneEuroFilter,
@@ -11,8 +15,11 @@ import {
   normalizeMediaPipeFaceBlendshapes,
   parseSavedMocapClip,
   quantizeMocapFrames,
+  resolveHandFingerBone,
   sampleMocapFaceChannelsAt,
+  solveHandLandmarksToRig,
   solvePoseLandmarksToRig,
+  solveSingleHandLandmarksToRig,
 } from '../dist/mocap/index.js';
 
 function createPose33Landmarks(raisedLeftArm = false) {
@@ -151,4 +158,145 @@ test('quantizeMocapFrames, parseSavedMocapClip, buildAnimationClipFromFrames, an
 
   const midFace = sampleMocapFaceChannelsAt(parsed.frames, 0.25, false);
   assert.ok(Math.abs(midFace.jawOpen - 0.4) < 0.01);
+});
+
+function createSyntheticHandLandmarks({
+  handedness = 'Right',
+  curl = 0,
+  spread = 0,
+  thumbCurl = 0,
+} = {}) {
+  // Hand held upright, palm facing camera (-z in MediaPipe image space => +z in solver space).
+  // For MediaPipe 'Right' (mirrored -> avatar 'left'), thumb sits on smaller image x so mirrored x is +X.
+  const thumbDirX = handedness === 'Right' ? -1 : 1;
+  const lms = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+  const wrist = { x: 0.5, y: 0.8, z: 0 };
+  lms[0] = wrist;
+
+  const fingerSpecs = [
+    { base: 5, offsetX: thumbDirX * 0.06, fanX: thumbDirX * 0.08 }, // index
+    { base: 9, offsetX: thumbDirX * 0.02, fanX: 0 }, // middle
+    { base: 13, offsetX: -thumbDirX * 0.02, fanX: -thumbDirX * 0.06 }, // ring
+    { base: 17, offsetX: -thumbDirX * 0.06, fanX: -thumbDirX * 0.14 }, // pinky
+  ];
+
+  const len = 0.06;
+  for (const spec of fingerSpecs) {
+    const mcp = { x: wrist.x + spec.offsetX, y: wrist.y - 0.14, z: 0 };
+    lms[spec.base] = mcp;
+    const lateral = spec.fanX + (spec.base === 5 ? thumbDirX * spread : 0);
+    const a1 = curl * 0.9;
+    const a2 = a1 + curl * 1.0;
+    const a3 = a2 + curl * 0.7;
+    const step = (prev, angle, lat) => ({
+      x: prev.x + lat * len * Math.cos(angle),
+      y: prev.y - len * Math.cos(angle),
+      z: prev.z - len * Math.sin(angle),
+    });
+    const pip = step(mcp, a1, lateral);
+    const dip = step(pip, a2, lateral * 0.4);
+    const tip = step(dip, a3, 0);
+    lms[spec.base + 1] = pip;
+    lms[spec.base + 2] = dip;
+    lms[spec.base + 3] = tip;
+  }
+
+  // Thumb chain (1..4)
+  const cmc = { x: wrist.x + thumbDirX * 0.05, y: wrist.y - 0.05, z: 0 };
+  const t1Angle = thumbCurl * 0.7;
+  const t2Angle = t1Angle + thumbCurl * 0.8;
+  const t3Angle = t2Angle + thumbCurl * 0.8;
+  const thumbMcp = {
+    x: cmc.x + thumbDirX * 0.05 * Math.cos(t1Angle),
+    y: cmc.y - 0.05 * Math.cos(t1Angle),
+    z: cmc.z - 0.05 * Math.sin(t1Angle),
+  };
+  const thumbIp = {
+    x: thumbMcp.x + thumbDirX * 0.045 * Math.cos(t2Angle),
+    y: thumbMcp.y - 0.045 * Math.cos(t2Angle),
+    z: thumbMcp.z - 0.045 * Math.sin(t2Angle),
+  };
+  const thumbTip = {
+    x: thumbIp.x + thumbDirX * 0.04 * Math.cos(t3Angle),
+    y: thumbIp.y - 0.04 * Math.cos(t3Angle),
+    z: thumbIp.z - 0.04 * Math.sin(t3Angle),
+  };
+  lms[1] = cmc;
+  lms[2] = thumbMcp;
+  lms[3] = thumbIp;
+  lms[4] = thumbTip;
+
+  return lms;
+}
+
+test('solveHandLandmarksToRig solves open vs curled fingers with anatomical clamps and mirror support', () => {
+  assert.equal(HAND_FINGER_BONE_IDS.length, 30);
+  assert.ok(HAND_FINGER_BONE_ALIASES['hand.left.index.1'].includes('mixamorigLeftHandIndex1'));
+
+  const openLms = createSyntheticHandLandmarks({ handedness: 'Right', curl: 0, thumbCurl: 0 });
+  const openSolved = solveHandLandmarksToRig(
+    [{ landmarks: openLms, handedness: 'Right', score: 0.95 }],
+    { mirrored: true },
+  );
+  assert.deepEqual(openSolved.trackedHands, ['left']);
+  assert.ok(openSolved.confidence > 0.9);
+  const openIndex1 = openSolved.boneRotations['hand.left.index.1'];
+  assert.ok(openIndex1);
+  const openEuler = new Euler().setFromQuaternion(new Quaternion(...openIndex1), 'XYZ');
+  assert.ok(Math.abs(openEuler.x) < 0.2, `Expected open index curl near 0, got ${openEuler.x}`);
+
+  const fistLms = createSyntheticHandLandmarks({ handedness: 'Right', curl: 1.0, thumbCurl: 0.9 });
+  const fistSolved = solveHandLandmarksToRig(
+    [{ landmarks: fistLms, handedness: 'Right', score: 0.92 }],
+    { mirrored: true },
+  );
+  const fistIndex1 = new Euler().setFromQuaternion(new Quaternion(...fistSolved.boneRotations['hand.left.index.1']), 'XYZ');
+  const fistIndex2 = new Euler().setFromQuaternion(new Quaternion(...fistSolved.boneRotations['hand.left.index.2']), 'XYZ');
+  const fistIndex3 = new Euler().setFromQuaternion(new Quaternion(...fistSolved.boneRotations['hand.left.index.3']), 'XYZ');
+  const fistThumb2 = new Euler().setFromQuaternion(new Quaternion(...fistSolved.boneRotations['hand.left.thumb.2']), 'XYZ');
+  assert.ok(fistIndex1.x > 0.5 && fistIndex1.x <= 1.48, `Expected positive clamped MCP curl, got ${fistIndex1.x}`);
+  assert.ok(fistIndex2.x > 0.6 && fistIndex2.x <= 1.85, `Expected positive clamped PIP curl, got ${fistIndex2.x}`);
+  assert.ok(fistIndex3.x > 0.3 && fistIndex3.x <= 1.35, `Expected positive clamped DIP curl, got ${fistIndex3.x}`);
+  assert.ok(fistThumb2.x > 0.2 && fistThumb2.x <= 1.15, `Expected positive thumb MCP curl, got ${fistThumb2.x}`);
+
+  // Unmirrored keeps MediaPipe 'Right' on avatar 'right'
+  const unmirrored = solveSingleHandLandmarksToRig(fistLms, 'Right', { mirrored: false });
+  assert.equal(unmirrored.side, 'right');
+  assert.ok(unmirrored.boneRotations['hand.right.index.1']);
+  assert.equal(unmirrored.boneRotations['hand.left.index.1'], undefined);
+
+  // Extreme curl values remain unit quaternions within anatomical clamps
+  const extremeLms = createSyntheticHandLandmarks({ handedness: 'Left', curl: 2.2, spread: 1.5, thumbCurl: 2.0 });
+  const extremeSolved = solveHandLandmarksToRig(
+    [{ landmarks: extremeLms, handedness: 'Left', score: 0.9 }],
+    { mirrored: true },
+  );
+  assert.deepEqual(extremeSolved.trackedHands, ['right']);
+  for (const tuple of Object.values(extremeSolved.boneRotations)) {
+    const len = Math.hypot(tuple[0], tuple[1], tuple[2], tuple[3]);
+    assert.ok(Math.abs(len - 1) < 1e-3, `Finger quaternion not unit length: ${len}`);
+  }
+});
+
+test('resolveHandFingerBone resolves Mixamo finger aliases via AvatarRig.resolveBone', () => {
+  const bones = [];
+  for (const def of MIXAMO_HUMANOID_RIG_V1.bones) {
+    if (!def.required) continue;
+    const bone = new Bone();
+    bone.name = def.aliases[0];
+    bones.push(bone);
+  }
+  const indexBone = new Bone();
+  indexBone.name = 'mixamorigLeftHandIndex1';
+  const thumbBone = new Bone();
+  thumbBone.name = 'mixamorig:RightHandThumb2';
+  bones.push(indexBone, thumbBone);
+
+  const root = new Group();
+  const rig = new AvatarRig(root, new Skeleton(bones), MIXAMO_HUMANOID_RIG_V1);
+
+  assert.equal(rig.getBone('hand.left.index.1'), undefined);
+  assert.equal(resolveHandFingerBone(rig, 'hand.left.index.1'), indexBone);
+  assert.equal(resolveHandFingerBone(rig, 'hand.right.thumb.2'), thumbBone);
+  assert.equal(resolveHandFingerBone(rig, 'hand.left.pinky.3'), undefined);
 });

@@ -1,6 +1,7 @@
 export * from './appearance/index.js';
 export * from './assets/index.js';
 export * from './body/index.js';
+export * from './connect/index.js';
 export * from './equipment/index.js';
 export * from './expressions/index.js';
 export * from './face/index.js';

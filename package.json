@@ -47,6 +47,10 @@
     "./mocap": {
       "types": "./dist/mocap/index.d.ts",
       "import": "./dist/mocap/index.js"
+    },
+    "./connect": {
+      "types": "./dist/connect/index.d.ts",
+      "import": "./dist/connect/index.js"
     }
   },
   "files": [
