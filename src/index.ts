@@ -7,6 +7,7 @@ export * from './face/index.js';
 export * from './format/index.js';
 export * from './head-archetypes/index.js';
 export * from './layering/index.js';
+export * from './mocap/index.js';
 export * from './pose/index.js';
 export * from './registry/index.js';
 export * from './rig/index.js';

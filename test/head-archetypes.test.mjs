@@ -23,7 +23,11 @@ import {
   readHeadArchetypeState,
   writeHeadArchetypeState,
 } from '../dist/index.js';
-import { BUILTIN_HEAD_ARCHETYPE_CATALOG } from '../dist/head-archetypes/index.js';
+import {
+  BUILTIN_HEAD_ARCHETYPE_CATALOG,
+  DEFAULT_SKIN_DETAIL_STRENGTH,
+  blendHeadArchetypeSkinDetail,
+} from '../dist/head-archetypes/index.js';
 
 function createHeadMesh({ prebaked = false } = {}) {
   const neckBone = new Bone();
@@ -386,4 +390,21 @@ test('parseHeadArchetypePack validates real Blender female and male packs and ap
     }),
     /deltas length must equal vertexIndices\.length \* 3/,
   );
+});
+
+test('head archetype detailStrength normalizes and drives blendHeadArchetypeSkinDetail', () => {
+  const normDefault = normalizeHeadArchetypeState({ weights: { manga: 0.8 }, detailStrength: DEFAULT_SKIN_DETAIL_STRENGTH });
+  assert.equal(normDefault.detailStrength, undefined);
+
+  const normCustom = normalizeHeadArchetypeState({ weights: { manga: 0.8 }, detailStrength: 0.92 });
+  assert.equal(normCustom.detailStrength, 0.92);
+
+  const zeroed = blendHeadArchetypeSkinDetail({ weights: { angular: 1 }, detailStrength: 0 });
+  assert.equal(zeroed.poreStrength, 0);
+  assert.equal(zeroed.cheekFlush, 0);
+
+  const mangaProfile = blendHeadArchetypeSkinDetail({ weights: { manga: 1 }, detailStrength: 1 });
+  const angularProfile = blendHeadArchetypeSkinDetail({ weights: { angular: 1 }, detailStrength: 1 });
+  assert.ok(mangaProfile.cheekFlush > angularProfile.cheekFlush);
+  assert.ok(angularProfile.poreStrength > mangaProfile.poreStrength);
 });

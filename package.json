@@ -43,6 +43,10 @@
     "./expressions": {
       "types": "./dist/expressions/index.d.ts",
       "import": "./dist/expressions/index.js"
+    },
+    "./mocap": {
+      "types": "./dist/mocap/index.d.ts",
+      "import": "./dist/mocap/index.js"
     }
   },
   "files": [

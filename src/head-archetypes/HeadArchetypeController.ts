@@ -16,6 +16,7 @@ import type { AvatarInstance } from '../runtime/AvatarInstance.js';
 
 export const HEAD_ARCHETYPE_TARGET_PREFIX = 'HeadArchetype_';
 export const HEAD_ARCHETYPE_BLENDED_TARGET = 'HeadArchetype_Blended';
+export const DEFAULT_SKIN_DETAIL_STRENGTH = 0.55;
 
 export const BUILTIN_HEAD_ARCHETYPE_CATALOG = [
   { id: 'black', label: 'Black / African' },
@@ -82,6 +83,14 @@ export function normalizeHeadArchetypeState(raw: unknown): AvatarHeadArchetypeSt
     }
     if (Object.keys(regions).length > 0) result.regions = regions;
   }
+
+  const rawDetail = raw['detailStrength'];
+  if (typeof rawDetail === 'number' && Number.isFinite(rawDetail)) {
+    const clampedDetail = Math.round(Math.max(0, Math.min(1, rawDetail)) * 100) / 100;
+    if (Math.abs(clampedDetail - DEFAULT_SKIN_DETAIL_STRENGTH) > 1e-4) {
+      result.detailStrength = clampedDetail;
+    }
+  }
   return result;
 }
 
@@ -98,7 +107,8 @@ export function writeHeadArchetypeState(
   const next: Record<string, unknown> = { ...current };
   const isEmpty =
     Object.keys(normalized.weights).length === 0
-    && (!normalized.regions || Object.keys(normalized.regions).length === 0);
+    && (!normalized.regions || Object.keys(normalized.regions).length === 0)
+    && normalized.detailStrength === undefined;
 
   if (isEmpty) {
     delete next[HEAD_ARCHETYPES_METADATA_KEY];

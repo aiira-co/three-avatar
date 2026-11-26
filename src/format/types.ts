@@ -218,6 +218,8 @@ export interface HeadArchetypeDefinition {
 export interface AvatarHeadArchetypeState {
   weights: Record<string, number>;
   regions?: Partial<Record<HeadArchetypeRegionId, Record<string, number>>>;
+  /** Procedural micro-normal / skin detail intensity in `0..1` (default `0.55`). */
+  detailStrength?: number;
 }
 
 export interface HeadArchetypePack {
