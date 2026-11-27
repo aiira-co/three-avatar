@@ -135,9 +135,12 @@ export class AppearanceController {
         if (propertyValue !== undefined && binding.properties.has(property)) material[property] = propertyValue;
       }
       if (value.opacity !== undefined && binding.properties.has('opacity')) {
-        material['transparent'] = binding.authoredTransparent || value.opacity < 1;
+        const nextTransparent = binding.authoredTransparent || value.opacity < 1;
+        if (material['transparent'] !== nextTransparent) {
+          material['transparent'] = nextTransparent;
+          material.needsUpdate = true;
+        }
       }
-      material.needsUpdate = true;
     }
   }
 

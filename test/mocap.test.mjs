@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Bone, Euler, Group, Quaternion, Skeleton } from 'three';
+import { Bone, Euler, Group, Quaternion, Skeleton, Vector3 } from 'three';
 import { AvatarRig } from '../dist/rig/AvatarRig.js';
 import { MIXAMO_HUMANOID_RIG_V1 } from '../dist/format/constants.js';
 import {
@@ -12,6 +12,7 @@ import {
   QuaternionOneEuroFilter,
   buildAnimationClipFromFrames,
   calibratePoseBaseline,
+  computeHeadCropRect,
   normalizeMediaPipeFaceBlendshapes,
   parseSavedMocapClip,
   quantizeMocapFrames,
@@ -299,4 +300,216 @@ test('resolveHandFingerBone resolves Mixamo finger aliases via AvatarRig.resolve
   assert.equal(resolveHandFingerBone(rig, 'hand.left.index.1'), indexBone);
   assert.equal(resolveHandFingerBone(rig, 'hand.right.thumb.2'), thumbBone);
   assert.equal(resolveHandFingerBone(rig, 'hand.left.pinky.3'), undefined);
+});
+
+/**
+ * Helper building hip-centered metric 3D MediaPipe Pose `worldLandmarks` in meters:
+ * +X right (viewer's right = subject's anatomical left when facing camera), +Y down, +Z away from camera.
+ */
+function createWorld33Landmarks({
+  raiseLeftArm = false,
+  bendLeftKnee = false,
+  torsoLeanForward = false,
+  headTurnLeft = false,
+} = {}) {
+  const w = Array.from({ length: 33 }, () => ({ x: 0, y: 0, z: 0, visibility: 0.95 }));
+  const torsoZ = torsoLeanForward ? -0.18 : 0;
+  // Head
+  w[0] = { x: headTurnLeft ? 0.055 : 0, y: -0.66, z: torsoZ - 0.1, visibility: 0.98 }; // nose
+  w[7] = { x: 0.08, y: -0.68, z: torsoZ, visibility: 0.95 }; // left ear (anatomical left)
+  w[8] = { x: -0.08, y: -0.68, z: torsoZ, visibility: 0.95 }; // right ear (anatomical right)
+  // Shoulders
+  w[11] = { x: 0.18, y: -0.5, z: torsoZ, visibility: 0.98 }; // left shoulder
+  w[12] = { x: -0.18, y: -0.5, z: torsoZ, visibility: 0.98 }; // right shoulder
+  // Arms (T-pose rest by default; optionally raise anatomical left arm upward)
+  w[13] = raiseLeftArm
+    ? { x: 0.34, y: -0.72, z: torsoZ, visibility: 0.95 }
+    : { x: 0.45, y: -0.5, z: torsoZ, visibility: 0.95 };
+  w[15] = raiseLeftArm
+    ? { x: 0.48, y: -0.92, z: torsoZ - 0.04, visibility: 0.95 }
+    : { x: 0.7, y: -0.5, z: torsoZ, visibility: 0.95 };
+  w[14] = { x: -0.45, y: -0.5, z: torsoZ, visibility: 0.95 };
+  w[16] = { x: -0.7, y: -0.5, z: torsoZ, visibility: 0.95 };
+  // Hips (centered at origin)
+  w[23] = { x: 0.1, y: 0, z: 0, visibility: 0.95 }; // left hip
+  w[24] = { x: -0.1, y: 0, z: 0, visibility: 0.95 }; // right hip
+  // Legs (straight down by default; optionally lift left knee forward & bend shin back)
+  w[25] = bendLeftKnee
+    ? { x: 0.1, y: 0.32, z: -0.26, visibility: 0.95 }
+    : { x: 0.1, y: 0.42, z: 0, visibility: 0.95 };
+  w[27] = bendLeftKnee
+    ? { x: 0.1, y: 0.68, z: 0.08, visibility: 0.95 }
+    : { x: 0.1, y: 0.84, z: 0, visibility: 0.95 };
+  w[26] = { x: -0.1, y: 0.42, z: 0, visibility: 0.95 };
+  w[28] = { x: -0.1, y: 0.84, z: 0, visibility: 0.95 };
+  return w;
+}
+
+/**
+ * Matching normalized 2D+Z poseLandmarks (facing camera: anatomical left has x > 0.5, right has x < 0.5).
+ */
+function createCameraSpacePose33({
+  raiseLeftArm = false,
+  bendLeftKnee = false,
+  torsoLeanForward = false,
+  headTurnLeft = false,
+} = {}) {
+  const world = createWorld33Landmarks({ raiseLeftArm, bendLeftKnee, torsoLeanForward, headTurnLeft });
+  // Map meters into centered [0..1] square space (1m -> 0.45 normalized units)
+  const scale = 0.45;
+  return world.map((lm) => ({
+    x: 0.5 + lm.x * scale,
+    y: 0.55 + lm.y * scale,
+    z: lm.z * scale,
+    visibility: lm.visibility,
+  }));
+}
+
+test('solvePoseLandmarksToRig solves metric worldLandmarks with mirrored false/true consistency', () => {
+  // Neutral T-pose in worldLandmarks -> near-identity arm/leg/spine rotations
+  const tPoseNorm = createCameraSpacePose33();
+  const tPoseWorld = createWorld33Landmarks();
+  for (const mirrored of [false, true]) {
+    const solvedRest = solvePoseLandmarksToRig(tPoseNorm, { mirrored, worldLandmarks: tPoseWorld });
+    for (const boneId of ['spine', 'spine2', 'arm.upper.left', 'arm.upper.right', 'leg.upper.left', 'leg.upper.right']) {
+      const q = new Quaternion(...solvedRest.boneRotations[boneId]);
+      assert.ok(q.angleTo(new Quaternion()) < 0.05, `Expected near-identity ${boneId} (mirrored=${mirrored}), angle=${q.angleTo(new Quaternion())}`);
+    }
+  }
+
+  // Raised anatomical left arm + bent left knee + torso forward lean + head turn left
+  const actionOpts = {
+    raiseLeftArm: true,
+    bendLeftKnee: true,
+    torsoLeanForward: true,
+    headTurnLeft: true,
+  };
+  const actionNorm = createCameraSpacePose33(actionOpts);
+  const actionWorld = createWorld33Landmarks(actionOpts);
+
+  // Unmirrored (video mode): anatomical left arm -> avatar left arm (+X rotated upward to +Y)
+  const solvedUnmirroredWorld = solvePoseLandmarksToRig(actionNorm, { mirrored: false, worldLandmarks: actionWorld });
+  const solvedUnmirroredNorm = solvePoseLandmarksToRig(actionNorm, { mirrored: false });
+
+  const leftArmDirWorld = new Vector3(1, 0, 0).applyQuaternion(new Quaternion(...solvedUnmirroredWorld.boneRotations['arm.upper.left']));
+  const leftArmDirNorm = new Vector3(1, 0, 0).applyQuaternion(new Quaternion(...solvedUnmirroredNorm.boneRotations['arm.upper.left']));
+  assert.ok(leftArmDirWorld.y > 0.5, `Expected raised left arm +Y (world), got ${leftArmDirWorld.y}`);
+  assert.ok(leftArmDirNorm.y > 0.5, `Expected raised left arm +Y (norm), got ${leftArmDirNorm.y}`);
+  assert.ok(leftArmDirWorld.distanceTo(leftArmDirNorm) < 0.05, 'World and normalized arm directions should align');
+
+  const rightArmDirWorld = new Vector3(-1, 0, 0).applyQuaternion(new Quaternion(...solvedUnmirroredWorld.boneRotations['arm.upper.right']));
+  assert.ok(Math.abs(rightArmDirWorld.y) < 0.05, 'Unraised right arm should remain horizontal');
+
+  // Knee lift forward (+Z) and shin bend backward (-Z)
+  const thighDirWorld = new Vector3(0, -1, 0).applyQuaternion(new Quaternion(...solvedUnmirroredWorld.boneRotations['leg.upper.left']));
+  const thighDirNorm = new Vector3(0, -1, 0).applyQuaternion(new Quaternion(...solvedUnmirroredNorm.boneRotations['leg.upper.left']));
+  assert.ok(thighDirWorld.z > 0.4, `Expected lifted left thigh +Z, got ${thighDirWorld.z}`);
+  assert.ok(thighDirWorld.distanceTo(thighDirNorm) < 0.05, 'World and normalized thigh directions should align');
+
+  const shinLocalWorld = new Vector3(0, -1, 0).applyQuaternion(new Quaternion(...solvedUnmirroredWorld.boneRotations['leg.lower.left']));
+  assert.ok(shinLocalWorld.z < -0.4, `Expected bent knee shin -Z in parent space, got ${shinLocalWorld.z}`);
+
+  // Torso forward lean -> positive X pitch on spine, matching normalized sign
+  const spineWorldEuler = new Euler().setFromQuaternion(new Quaternion(...solvedUnmirroredWorld.boneRotations['spine']), 'YXZ');
+  const spineNormEuler = new Euler().setFromQuaternion(new Quaternion(...solvedUnmirroredNorm.boneRotations['spine']), 'YXZ');
+  assert.ok(spineWorldEuler.x > 0.08 && spineNormEuler.x > 0.08, `Expected positive forward spine pitch, got world=${spineWorldEuler.x}, norm=${spineNormEuler.x}`);
+
+  // Head turn left -> positive Y yaw when unmirrored, negative Y yaw when mirrored
+  const headUnmirrored = new Euler().setFromQuaternion(new Quaternion(...solvedUnmirroredWorld.boneRotations['head']), 'YXZ');
+  const solvedMirroredWorld = solvePoseLandmarksToRig(actionNorm, { mirrored: true, worldLandmarks: actionWorld });
+  const headMirrored = new Euler().setFromQuaternion(new Quaternion(...solvedMirroredWorld.boneRotations['head']), 'YXZ');
+  assert.ok(headUnmirrored.y > 0.2, `Expected positive head yaw when unmirrored, got ${headUnmirrored.y}`);
+  assert.ok(headMirrored.y < -0.2, `Expected negative head yaw when mirrored, got ${headMirrored.y}`);
+
+  // Mirrored swaps anatomical left raised arm onto avatar right arm
+  const mirroredRightArm = new Vector3(-1, 0, 0).applyQuaternion(new Quaternion(...solvedMirroredWorld.boneRotations['arm.upper.right']));
+  const mirroredLeftArm = new Vector3(1, 0, 0).applyQuaternion(new Quaternion(...solvedMirroredWorld.boneRotations['arm.upper.left']));
+  assert.ok(mirroredRightArm.y > 0.5, `Expected mirrored raised arm on avatar right, got ${mirroredRightArm.y}`);
+  assert.ok(Math.abs(mirroredLeftArm.y) < 0.05, `Expected avatar left arm to stay horizontal when mirrored, got ${mirroredLeftArm.y}`);
+});
+
+test('solvePoseLandmarksToRig worldLandmarks visibility gating and short-array fallback', () => {
+  const norm = createCameraSpacePose33({ raiseLeftArm: true });
+  const world = createWorld33Landmarks({ raiseLeftArm: true });
+
+  // Visibility from poseLandmarks gates worldLandmarks bones
+  const occludedNorm = norm.map((lm, i) => (i === 13 || i === 15 ? { ...lm, visibility: 0.1 } : lm));
+  const occludedSolved = solvePoseLandmarksToRig(occludedNorm, { mirrored: false, worldLandmarks: world });
+  assert.equal(occludedSolved.boneRotations['arm.upper.left'], undefined);
+  assert.equal(occludedSolved.boneRotations['arm.lower.left'], undefined);
+  assert.ok(occludedSolved.boneRotations['arm.upper.right']);
+
+  // Falls back to worldLandmarks[i].visibility ?? 1 when poseLandmarks omits visibility
+  const noVisNorm = norm.map(({ x, y, z }) => ({ x, y, z }));
+  const worldWithLowRightArm = world.map((lm, i) => (i === 14 ? { ...lm, visibility: 0.1 } : { x: lm.x, y: lm.y, z: lm.z }));
+  const fallbackVisSolved = solvePoseLandmarksToRig(noVisNorm, { mirrored: false, worldLandmarks: worldWithLowRightArm });
+  assert.ok(fallbackVisSolved.boneRotations['arm.upper.left']);
+  assert.equal(fallbackVisSolved.boneRotations['arm.upper.right'], undefined);
+
+  // Short/missing worldLandmarks falls back identically to normalized poseLandmarks
+  const baselineNorm = solvePoseLandmarksToRig(norm, { mirrored: false });
+  const shortWorld = solvePoseLandmarksToRig(norm, { mirrored: false, worldLandmarks: world.slice(0, 10) });
+  assert.deepEqual(shortWorld, baselineNorm);
+});
+
+test('computeHeadCropRect handles wide shots, edge clamping, close-ups, and missing landmarks', () => {
+  // Wide full-body 1280x720 shot: person occupies ~75% height, head ~11% height
+  const wideLms = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 0.95 }));
+  wideLms[0] = { x: 0.5, y: 0.18, z: -0.05, visibility: 0.98 }; // nose
+  wideLms[7] = { x: 0.52, y: 0.175, z: 0, visibility: 0.95 }; // left ear
+  wideLms[8] = { x: 0.48, y: 0.175, z: 0, visibility: 0.95 }; // right ear
+  wideLms[11] = { x: 0.55, y: 0.27, z: 0, visibility: 0.98 }; // left shoulder
+  wideLms[12] = { x: 0.45, y: 0.27, z: 0, visibility: 0.98 }; // right shoulder
+
+  const rect = computeHeadCropRect(wideLms, 1280, 720);
+  assert.ok(rect, 'Expected valid head crop rect for wide full-body shot');
+  assert.equal(rect.sw, rect.sh, 'Crop rect must be square');
+  assert.ok(rect.sx >= 0 && rect.sy >= 0, 'Origin must be >= 0');
+  assert.ok(rect.sx + rect.sw <= 1280 && rect.sy + rect.sh <= 720, 'Rect must be clamped within frame');
+  assert.ok(rect.sh / 720 < 0.42, `Expected sh/frameHeight < 0.42, got ${rect.sh / 720}`);
+  // Nose pixel (640, 129.6) should lie inside the returned crop box
+  assert.ok(rect.sx <= 640 && 640 <= rect.sx + rect.sw);
+  assert.ok(rect.sy <= 130 && 130 <= rect.sy + rect.sh);
+
+  // Corner clamping: head near top-left edge stays square and strictly inside bounds
+  const cornerLms = wideLms.map((lm) => ({ ...lm, x: lm.x - 0.48, y: lm.y - 0.16 }));
+  const cornerRect = computeHeadCropRect(cornerLms, 1280, 720);
+  assert.ok(cornerRect);
+  assert.equal(cornerRect.sw, cornerRect.sh);
+  assert.equal(cornerRect.sx, 0);
+  assert.equal(cornerRect.sy, 0);
+  assert.ok(cornerRect.sx + cornerRect.sw <= 1280 && cornerRect.sy + cornerRect.sh <= 720);
+
+  // Bottom-right corner clamping
+  const brLms = wideLms.map((lm) => ({ ...lm, x: lm.x + 0.48, y: lm.y + 0.78 }));
+  const brRect = computeHeadCropRect(brLms, 1280, 720);
+  assert.ok(brRect);
+  assert.equal(brRect.sw, brRect.sh);
+  assert.ok(brRect.sx >= 0 && brRect.sy >= 0);
+  assert.equal(brRect.sx + brRect.sw, 1280);
+  assert.equal(brRect.sy + brRect.sh, 720);
+
+  // Partial anchors (ears hidden, nose + shoulders visible) still produces a valid square crop
+  const shouldersOnlyLms = wideLms.map((lm, i) => (i === 7 || i === 8 ? { ...lm, visibility: 0.05 } : lm));
+  const shouldersOnlyRect = computeHeadCropRect(shouldersOnlyLms, 1280, 720);
+  assert.ok(shouldersOnlyRect);
+  assert.equal(shouldersOnlyRect.sw, shouldersOnlyRect.sh);
+
+  // Close-up shot: face already large relative to frame height -> returns undefined
+  const closeupLms = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 0.95 }));
+  closeupLms[0] = { x: 0.5, y: 0.42, z: -0.1, visibility: 0.98 };
+  closeupLms[7] = { x: 0.6, y: 0.41, z: 0, visibility: 0.95 };
+  closeupLms[8] = { x: 0.4, y: 0.41, z: 0, visibility: 0.95 };
+  closeupLms[11] = { x: 0.72, y: 0.78, z: 0, visibility: 0.98 };
+  closeupLms[12] = { x: 0.28, y: 0.78, z: 0, visibility: 0.98 };
+  assert.equal(computeHeadCropRect(closeupLms, 1280, 720), undefined);
+
+  // Missing landmarks, low visibility, and invalid frame dimensions -> undefined
+  assert.equal(computeHeadCropRect([], 1280, 720), undefined);
+  const lowVisNose = wideLms.map((lm, i) => (i === 0 ? { ...lm, visibility: 0.1 } : lm));
+  assert.equal(computeHeadCropRect(lowVisNose, 1280, 720), undefined);
+  const noseOnly = wideLms.map((lm, i) => (i === 0 ? lm : { ...lm, visibility: 0.05 }));
+  assert.equal(computeHeadCropRect(noseOnly, 1280, 720), undefined);
+  assert.equal(computeHeadCropRect(wideLms, 0, 720), undefined);
+  assert.equal(computeHeadCropRect(wideLms, 1280, -10), undefined);
 });

@@ -28,6 +28,33 @@ export interface PoseSolveOptions {
   applyBody?: boolean;
   /** Include leg/knee solving when hips/ankles are visible. Default `true`. */
   applyLegs?: boolean;
+  /**
+   * Optional metric 3D MediaPipe Pose `worldLandmarks` (hip-centered in meters,
+   * `+X` right in camera space, `+Y` down, `+Z` away from camera).
+   * When provided with length `>= 29`, 3D bone direction vectors are computed from
+   * `worldLandmarks` while reading landmark visibility from `poseLandmarks`
+   * (falling back to `worldLandmarks[i].visibility ?? 1`).
+   */
+  worldLandmarks?: readonly NormalizedLandmark[];
+}
+
+export interface HeadCropOptions {
+  /** Minimum landmark visibility score required for head/shoulder anchors. Default `0.35`. */
+  minVisibility?: number;
+  /** Fractional margin added around the estimated head size (`side = baseSize * (1 + padding)`). Default `0.5`. */
+  padding?: number;
+  /**
+   * Skip cropping (`undefined` returned) when `sh / frameHeight >= maxHeightRatio`,
+   * so close-up shots do not unnecessarily crop. Default `0.42`.
+   */
+  maxHeightRatio?: number;
+}
+
+export interface HeadCropRect {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
 }
 
 export interface MocapSolvedPose {
@@ -119,9 +146,153 @@ function landmarkToWorldVec(lm: NormalizedLandmark, mirrored: boolean): Vector3 
   return new Vector3(x, y, z);
 }
 
-function visOk(lm: NormalizedLandmark | undefined, minVisibility: number): lm is NormalizedLandmark {
-  if (!lm) return false;
-  return (lm.visibility ?? 1) >= minVisibility;
+function worldLandmarkToSolverVec(lm: NormalizedLandmark, mirrored: boolean): Vector3 {
+  // MediaPipe Pose worldLandmarks are hip-centered metric 3D coordinates in meters:
+  // +x right (camera space), +y down, +z away from camera (negative toward camera).
+  // Convert to solver space (+X character/stage-left, +Y up, +Z toward camera) matching landmarkToWorldVec.
+  const x = mirrored ? -lm.x : lm.x;
+  const y = -lm.y;
+  const z = -lm.z;
+  return new Vector3(x, y, z);
+}
+
+function isFiniteLandmark(lm: NormalizedLandmark | undefined): lm is NormalizedLandmark {
+  return (
+    lm !== undefined &&
+    Number.isFinite(lm.x) &&
+    Number.isFinite(lm.y) &&
+    Number.isFinite(lm.z)
+  );
+}
+
+/**
+ * Estimates a square pixel-space head crop box from MediaPipe Pose landmarks
+ * (nose, ears, shoulders) clamped to `[0, frameWidth] x [0, frameHeight]`.
+ *
+ * Returns `undefined` when required landmarks are missing/low-visibility or when the
+ * estimated head crop already occupies at least `maxHeightRatio` of `frameHeight`.
+ */
+export function computeHeadCropRect(
+  poseLandmarks: readonly NormalizedLandmark[],
+  frameWidth: number,
+  frameHeight: number,
+  options: HeadCropOptions = {},
+): HeadCropRect | undefined {
+  if (
+    !Array.isArray(poseLandmarks) ||
+    poseLandmarks.length === 0 ||
+    !Number.isFinite(frameWidth) ||
+    !Number.isFinite(frameHeight) ||
+    frameWidth < 1 ||
+    frameHeight < 1
+  ) {
+    return undefined;
+  }
+
+  const minVisibility = options.minVisibility ?? 0.35;
+  const padding = Number.isFinite(options.padding) ? Math.max(0, Math.min(3, options.padding!)) : 0.5;
+  const maxHeightRatio = Number.isFinite(options.maxHeightRatio)
+    ? Math.max(0.05, Math.min(1, options.maxHeightRatio!))
+    : 0.42;
+
+  const nose = poseLandmarks[LM_NOSE];
+  if (
+    !nose ||
+    !Number.isFinite(nose.x) ||
+    !Number.isFinite(nose.y) ||
+    (nose.visibility ?? 1) < minVisibility ||
+    nose.x < -0.1 ||
+    nose.x > 1.1 ||
+    nose.y < -0.1 ||
+    nose.y > 1.1
+  ) {
+    return undefined;
+  }
+
+  const ok2d = (lm: NormalizedLandmark | undefined): lm is NormalizedLandmark =>
+    lm !== undefined &&
+    Number.isFinite(lm.x) &&
+    Number.isFinite(lm.y) &&
+    (lm.visibility ?? 1) >= minVisibility;
+
+  const lEar = poseLandmarks[LM_LEFT_EAR];
+  const rEar = poseLandmarks[LM_RIGHT_EAR];
+  const lShoulder = poseLandmarks[LM_LEFT_SHOULDER];
+  const rShoulder = poseLandmarks[LM_RIGHT_SHOULDER];
+
+  const hasLEar = ok2d(lEar);
+  const hasREar = ok2d(rEar);
+  const hasLShoulder = ok2d(lShoulder);
+  const hasRShoulder = ok2d(rShoulder);
+
+  const noseX = nose.x * frameWidth;
+  const noseY = nose.y * frameHeight;
+
+  const sizeEstimates: number[] = [];
+  if (hasLEar && hasREar) {
+    const earSpanPx = Math.hypot((lEar.x - rEar.x) * frameWidth, (lEar.y - rEar.y) * frameHeight);
+    if (earSpanPx > 1) {
+      sizeEstimates.push(earSpanPx * 1.55);
+    }
+  }
+  if (hasLShoulder && hasRShoulder) {
+    const shoulderSpanPx = Math.hypot(
+      (lShoulder.x - rShoulder.x) * frameWidth,
+      (lShoulder.y - rShoulder.y) * frameHeight,
+    );
+    if (shoulderSpanPx > 1) {
+      sizeEstimates.push(shoulderSpanPx * 0.65);
+    }
+    const shMidX = ((lShoulder.x + rShoulder.x) * 0.5) * frameWidth;
+    const shMidY = ((lShoulder.y + rShoulder.y) * 0.5) * frameHeight;
+    const noseToShoulderPx = Math.hypot(noseX - shMidX, noseY - shMidY);
+    if (noseToShoulderPx > 1) {
+      sizeEstimates.push(noseToShoulderPx * 1.25);
+    }
+  }
+  if (sizeEstimates.length === 0 && (hasLEar || hasREar)) {
+    const ear = (hasLEar ? lEar : rEar)!;
+    const noseToEarPx = Math.hypot(noseX - ear.x * frameWidth, noseY - ear.y * frameHeight);
+    if (noseToEarPx > 1) {
+      sizeEstimates.push(noseToEarPx * 2.4);
+    }
+  }
+
+  if (sizeEstimates.length === 0) {
+    return undefined;
+  }
+
+  const baseHeadSize = Math.max(...sizeEstimates);
+  if (!Number.isFinite(baseHeadSize) || baseHeadSize <= 1) {
+    return undefined;
+  }
+
+  const maxDim = Math.floor(Math.min(frameWidth, frameHeight));
+  const rawSide = baseHeadSize * (1 + padding);
+  const side = Math.min(maxDim, Math.round(rawSide));
+  if (side < 1 || side / frameHeight >= maxHeightRatio) {
+    return undefined;
+  }
+
+  let cx = noseX;
+  let cy = noseY;
+  if (hasLEar && hasREar) {
+    const earMidX = ((lEar.x + rEar.x) * 0.5) * frameWidth;
+    const earMidY = ((lEar.y + rEar.y) * 0.5) * frameHeight;
+    cx = (noseX + earMidX) * 0.5;
+    cy = (noseY + earMidY) * 0.5;
+  } else if (hasLEar || hasREar) {
+    const ear = (hasLEar ? lEar : rEar)!;
+    cx = (noseX + ear.x * frameWidth) * 0.5;
+    cy = (noseY + ear.y * frameHeight) * 0.5;
+  }
+
+  const maxSx = Math.max(0, Math.floor(frameWidth) - side);
+  const maxSy = Math.max(0, Math.floor(frameHeight) - side);
+  const sx = Math.max(0, Math.min(maxSx, Math.round(cx - side * 0.5)));
+  const sy = Math.max(0, Math.min(maxSy, Math.round(cy - side * 0.5)));
+
+  return { sx, sy, sw: side, sh: side };
 }
 
 function clampedDeltaFromDirs(
@@ -147,28 +318,33 @@ function clampedDeltaFromDirs(
 export function calibratePoseBaseline(
   poseLandmarks: readonly NormalizedLandmark[],
   mirrored = true,
+  worldLandmarks?: readonly NormalizedLandmark[],
 ): MocapCalibrationBaseline | undefined {
-  const lSh = poseLandmarks[LM_LEFT_SHOULDER];
-  const rSh = poseLandmarks[LM_RIGHT_SHOULDER];
-  const lHip = poseLandmarks[LM_LEFT_HIP];
-  const rHip = poseLandmarks[LM_RIGHT_HIP];
+  const useWorld = Array.isArray(worldLandmarks) && worldLandmarks.length >= 29;
+  const src = useWorld ? worldLandmarks : poseLandmarks;
+  const toVec = useWorld ? worldLandmarkToSolverVec : landmarkToWorldVec;
+
+  const lSh = src[LM_LEFT_SHOULDER];
+  const rSh = src[LM_RIGHT_SHOULDER];
+  const lHip = src[LM_LEFT_HIP];
+  const rHip = src[LM_RIGHT_HIP];
   if (!lSh || !rSh || !lHip || !rHip) return undefined;
 
-  const pLSh = landmarkToWorldVec(lSh, mirrored);
-  const pRSh = landmarkToWorldVec(rSh, mirrored);
-  const pHip = landmarkToWorldVec(lHip, mirrored)
-    .add(landmarkToWorldVec(rHip, mirrored))
+  const pLSh = toVec(lSh, mirrored);
+  const pRSh = toVec(rSh, mirrored);
+  const pHip = toVec(lHip, mirrored)
+    .add(toVec(rHip, mirrored))
     .multiplyScalar(0.5);
 
-  const lEar = poseLandmarks[LM_LEFT_EAR];
-  const rEar = poseLandmarks[LM_RIGHT_EAR];
-  const nose = poseLandmarks[LM_NOSE];
+  const lEar = src[LM_LEFT_EAR];
+  const rEar = src[LM_RIGHT_EAR];
+  const nose = src[LM_NOSE];
   let headPitchBiasRad = 0;
   if (lEar && rEar && nose) {
-    const earMid = landmarkToWorldVec(lEar, mirrored)
-      .add(landmarkToWorldVec(rEar, mirrored))
+    const earMid = toVec(lEar, mirrored)
+      .add(toVec(rEar, mirrored))
       .multiplyScalar(0.5);
-    const nosePos = landmarkToWorldVec(nose, mirrored);
+    const nosePos = toVec(nose, mirrored);
     headPitchBiasRad = Math.atan2(nosePos.y - earMid.y, Math.max(0.04, Math.hypot(nosePos.z - earMid.z, 0.04)));
   }
 
@@ -182,6 +358,10 @@ export function calibratePoseBaseline(
 /**
  * Solves 33 MediaPipe BlazePose landmarks into delta bone quaternions keyed by
  * `MIXAMO_HUMANOID_RIG_V1` semantic bone IDs.
+ *
+ * When `options.worldLandmarks` is provided (`length >= 29`), 3D bone vectors are computed
+ * from metric hip-centered `worldLandmarks` while visibility gating reads `poseLandmarks`
+ * first and falls back to `worldLandmarks[i].visibility ?? 1`.
  */
 export function solvePoseLandmarksToRig(
   poseLandmarks: readonly NormalizedLandmark[],
@@ -192,34 +372,48 @@ export function solvePoseLandmarksToRig(
   const minVisibility = options.minVisibility ?? 0.35;
   const applyBody = options.applyBody ?? true;
   const applyLegs = options.applyLegs ?? true;
+  const worldLandmarks = options.worldLandmarks;
+  const useWorld = Array.isArray(worldLandmarks) && worldLandmarks.length >= 29;
 
   const boneRotations: Record<string, [number, number, number, number]> = {};
   if (!applyBody && !applyLegs) {
     return { boneRotations, confidence: 0 };
   }
 
-  const lShoulderLm = poseLandmarks[LM_LEFT_SHOULDER];
-  const rShoulderLm = poseLandmarks[LM_RIGHT_SHOULDER];
-  const lHipLm = poseLandmarks[LM_LEFT_HIP];
-  const rHipLm = poseLandmarks[LM_RIGHT_HIP];
+  const hasLandmark = (idx: number): boolean => {
+    const geomLm = useWorld ? worldLandmarks[idx] : poseLandmarks[idx];
+    if (!isFiniteLandmark(geomLm)) return false;
+    const vis = poseLandmarks[idx]?.visibility ?? geomLm.visibility ?? 1;
+    return vis >= minVisibility;
+  };
+
+  const posAt = (idx: number): Vector3 => {
+    if (useWorld) {
+      return worldLandmarkToSolverVec(worldLandmarks[idx]!, mirrored);
+    }
+    return landmarkToWorldVec(poseLandmarks[idx]!, mirrored);
+  };
 
   const trackedScores: number[] = [];
   for (const idx of [LM_NOSE, LM_LEFT_SHOULDER, LM_RIGHT_SHOULDER, LM_LEFT_ELBOW, LM_RIGHT_ELBOW]) {
-    const lm = poseLandmarks[idx];
-    if (lm) trackedScores.push(lm.visibility ?? 1);
+    const poseLm = poseLandmarks[idx];
+    const worldLm = useWorld ? worldLandmarks[idx] : undefined;
+    if (poseLm || worldLm) {
+      trackedScores.push(poseLm?.visibility ?? worldLm?.visibility ?? 1);
+    }
   }
   const confidence =
     trackedScores.length > 0
       ? trackedScores.reduce((sum, v) => sum + v, 0) / trackedScores.length
       : 0;
 
-  if (!visOk(lShoulderLm, minVisibility) || !visOk(rShoulderLm, minVisibility)) {
+  if (!hasLandmark(LM_LEFT_SHOULDER) || !hasLandmark(LM_RIGHT_SHOULDER)) {
     return { boneRotations, confidence };
   }
 
   // Note: When selfie-mirrored, anatomical viewer-left in screen space corresponds to the swapped side.
-  const leftShoulderPos = landmarkToWorldVec(mirrored ? rShoulderLm : lShoulderLm, mirrored);
-  const rightShoulderPos = landmarkToWorldVec(mirrored ? lShoulderLm : rShoulderLm, mirrored);
+  const leftShoulderPos = posAt(mirrored ? LM_RIGHT_SHOULDER : LM_LEFT_SHOULDER);
+  const rightShoulderPos = posAt(mirrored ? LM_LEFT_SHOULDER : LM_RIGHT_SHOULDER);
   const shoulderMid = leftShoulderPos.clone().add(rightShoulderPos).multiplyScalar(0.5);
 
   const shoulderVec = leftShoulderPos.clone().sub(rightShoulderPos);
@@ -227,9 +421,10 @@ export function solvePoseLandmarksToRig(
 
   let spinePitch = 0;
   let spineYaw = 0;
-  if (visOk(lHipLm, minVisibility) && visOk(rHipLm, minVisibility)) {
-    const hipMid = landmarkToWorldVec(lHipLm, mirrored)
-      .add(landmarkToWorldVec(rHipLm, mirrored))
+  const hasHips = hasLandmark(LM_LEFT_HIP) && hasLandmark(LM_RIGHT_HIP);
+  if (hasHips) {
+    const hipMid = posAt(LM_LEFT_HIP)
+      .add(posAt(LM_RIGHT_HIP))
       .multiplyScalar(0.5);
     const torsoDir = shoulderMid.clone().sub(hipMid).normalize();
     spinePitch = Math.max(-0.5, Math.min(0.5, Math.atan2(torsoDir.z, Math.max(0.1, torsoDir.y))));
@@ -242,14 +437,11 @@ export function solvePoseLandmarksToRig(
     boneRotations['spine'] = [qSpine.x, qSpine.y, qSpine.z, qSpine.w];
     boneRotations['spine2'] = [qChest.x, qChest.y, qChest.z, qChest.w];
 
-    const noseLm = poseLandmarks[LM_NOSE];
-    const lEarLm = poseLandmarks[LM_LEFT_EAR];
-    const rEarLm = poseLandmarks[LM_RIGHT_EAR];
-    if (visOk(noseLm, minVisibility) && visOk(lEarLm, minVisibility) && visOk(rEarLm, minVisibility)) {
-      const leftEar = landmarkToWorldVec(mirrored ? rEarLm : lEarLm, mirrored);
-      const rightEar = landmarkToWorldVec(mirrored ? lEarLm : rEarLm, mirrored);
+    if (hasLandmark(LM_NOSE) && hasLandmark(LM_LEFT_EAR) && hasLandmark(LM_RIGHT_EAR)) {
+      const leftEar = posAt(mirrored ? LM_RIGHT_EAR : LM_LEFT_EAR);
+      const rightEar = posAt(mirrored ? LM_LEFT_EAR : LM_RIGHT_EAR);
       const earMid = leftEar.clone().add(rightEar).multiplyScalar(0.5);
-      const nosePos = landmarkToWorldVec(noseLm, mirrored);
+      const nosePos = posAt(LM_NOSE);
       const earVec = leftEar.clone().sub(rightEar);
 
       const headRoll = Math.max(-0.55, Math.min(0.55, Math.atan2(earVec.y, Math.max(0.04, earVec.x))));
@@ -264,16 +456,16 @@ export function solvePoseLandmarksToRig(
     }
 
     // Left arm
-    const lElbowLm = poseLandmarks[mirrored ? LM_RIGHT_ELBOW : LM_LEFT_ELBOW];
-    const lWristLm = poseLandmarks[mirrored ? LM_RIGHT_WRIST : LM_LEFT_WRIST];
-    if (visOk(lElbowLm, minVisibility)) {
-      const lElbow = landmarkToWorldVec(lElbowLm, mirrored);
+    const lElbowIdx = mirrored ? LM_RIGHT_ELBOW : LM_LEFT_ELBOW;
+    const lWristIdx = mirrored ? LM_RIGHT_WRIST : LM_LEFT_WRIST;
+    if (hasLandmark(lElbowIdx)) {
+      const lElbow = posAt(lElbowIdx);
       const upperVec = lElbow.clone().sub(leftShoulderPos);
       const qUpper = clampedDeltaFromDirs(REST_DIR['arm.upper.left']!, upperVec, Math.PI * 0.78);
       boneRotations['arm.upper.left'] = [qUpper.x, qUpper.y, qUpper.z, qUpper.w];
 
-      if (visOk(lWristLm, minVisibility)) {
-        const lWrist = landmarkToWorldVec(lWristLm, mirrored);
+      if (hasLandmark(lWristIdx)) {
+        const lWrist = posAt(lWristIdx);
         const worldLowerDir = lWrist.clone().sub(lElbow).normalize();
         const invUpper = qUpper.clone().invert();
         const parentSpaceLowerDir = worldLowerDir.applyQuaternion(invUpper);
@@ -283,16 +475,16 @@ export function solvePoseLandmarksToRig(
     }
 
     // Right arm
-    const rElbowLm = poseLandmarks[mirrored ? LM_LEFT_ELBOW : LM_RIGHT_ELBOW];
-    const rWristLm = poseLandmarks[mirrored ? LM_LEFT_WRIST : LM_RIGHT_WRIST];
-    if (visOk(rElbowLm, minVisibility)) {
-      const rElbow = landmarkToWorldVec(rElbowLm, mirrored);
+    const rElbowIdx = mirrored ? LM_LEFT_ELBOW : LM_RIGHT_ELBOW;
+    const rWristIdx = mirrored ? LM_LEFT_WRIST : LM_RIGHT_WRIST;
+    if (hasLandmark(rElbowIdx)) {
+      const rElbow = posAt(rElbowIdx);
       const upperVec = rElbow.clone().sub(rightShoulderPos);
       const qUpper = clampedDeltaFromDirs(REST_DIR['arm.upper.right']!, upperVec, Math.PI * 0.78);
       boneRotations['arm.upper.right'] = [qUpper.x, qUpper.y, qUpper.z, qUpper.w];
 
-      if (visOk(rWristLm, minVisibility)) {
-        const rWrist = landmarkToWorldVec(rWristLm, mirrored);
+      if (hasLandmark(rWristIdx)) {
+        const rWrist = posAt(rWristIdx);
         const worldLowerDir = rWrist.clone().sub(rElbow).normalize();
         const invUpper = qUpper.clone().invert();
         const parentSpaceLowerDir = worldLowerDir.applyQuaternion(invUpper);
@@ -302,32 +494,32 @@ export function solvePoseLandmarksToRig(
     }
   }
 
-  if (applyLegs && visOk(lHipLm, minVisibility) && visOk(rHipLm, minVisibility)) {
-    const leftHipPos = landmarkToWorldVec(mirrored ? rHipLm : lHipLm, mirrored);
-    const rightHipPos = landmarkToWorldVec(mirrored ? lHipLm : rHipLm, mirrored);
+  if (applyLegs && hasHips) {
+    const leftHipPos = posAt(mirrored ? LM_RIGHT_HIP : LM_LEFT_HIP);
+    const rightHipPos = posAt(mirrored ? LM_LEFT_HIP : LM_RIGHT_HIP);
 
-    const lKneeLm = poseLandmarks[mirrored ? LM_RIGHT_KNEE : LM_LEFT_KNEE];
-    const lAnkleLm = poseLandmarks[mirrored ? LM_RIGHT_ANKLE : LM_LEFT_ANKLE];
-    if (visOk(lKneeLm, minVisibility)) {
-      const lKnee = landmarkToWorldVec(lKneeLm, mirrored);
+    const lKneeIdx = mirrored ? LM_RIGHT_KNEE : LM_LEFT_KNEE;
+    const lAnkleIdx = mirrored ? LM_RIGHT_ANKLE : LM_LEFT_ANKLE;
+    if (hasLandmark(lKneeIdx)) {
+      const lKnee = posAt(lKneeIdx);
       const qUpperLeg = clampedDeltaFromDirs(REST_DIR['leg.upper.left']!, lKnee.clone().sub(leftHipPos), Math.PI * 0.65);
       boneRotations['leg.upper.left'] = [qUpperLeg.x, qUpperLeg.y, qUpperLeg.z, qUpperLeg.w];
-      if (visOk(lAnkleLm, minVisibility)) {
-        const lAnkle = landmarkToWorldVec(lAnkleLm, mirrored);
+      if (hasLandmark(lAnkleIdx)) {
+        const lAnkle = posAt(lAnkleIdx);
         const worldShin = lAnkle.clone().sub(lKnee).normalize().applyQuaternion(qUpperLeg.clone().invert());
         const qLowerLeg = clampedDeltaFromDirs(REST_DIR['leg.lower.left']!, worldShin, Math.PI * 0.65);
         boneRotations['leg.lower.left'] = [qLowerLeg.x, qLowerLeg.y, qLowerLeg.z, qLowerLeg.w];
       }
     }
 
-    const rKneeLm = poseLandmarks[mirrored ? LM_LEFT_KNEE : LM_RIGHT_KNEE];
-    const rAnkleLm = poseLandmarks[mirrored ? LM_LEFT_ANKLE : LM_RIGHT_ANKLE];
-    if (visOk(rKneeLm, minVisibility)) {
-      const rKnee = landmarkToWorldVec(rKneeLm, mirrored);
+    const rKneeIdx = mirrored ? LM_LEFT_KNEE : LM_RIGHT_KNEE;
+    const rAnkleIdx = mirrored ? LM_LEFT_ANKLE : LM_RIGHT_ANKLE;
+    if (hasLandmark(rKneeIdx)) {
+      const rKnee = posAt(rKneeIdx);
       const qUpperLeg = clampedDeltaFromDirs(REST_DIR['leg.upper.right']!, rKnee.clone().sub(rightHipPos), Math.PI * 0.65);
       boneRotations['leg.upper.right'] = [qUpperLeg.x, qUpperLeg.y, qUpperLeg.z, qUpperLeg.w];
-      if (visOk(rAnkleLm, minVisibility)) {
-        const rAnkle = landmarkToWorldVec(rAnkleLm, mirrored);
+      if (hasLandmark(rAnkleIdx)) {
+        const rAnkle = posAt(rAnkleIdx);
         const worldShin = rAnkle.clone().sub(rKnee).normalize().applyQuaternion(qUpperLeg.clone().invert());
         const qLowerLeg = clampedDeltaFromDirs(REST_DIR['leg.lower.right']!, worldShin, Math.PI * 0.65);
         boneRotations['leg.lower.right'] = [qLowerLeg.x, qLowerLeg.y, qLowerLeg.z, qLowerLeg.w];
